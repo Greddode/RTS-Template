@@ -9,6 +9,8 @@
 //
 // The grid is rebuilt from scratch once per sim tick. For a few thousand units
 // that's cheap, and much simpler than tracking units moving between cells.
+// Units that die during a tick stay listed until the next rebuild, so every
+// query skips inactive units.
 
 #include "grid.h"
 #include "units.h"
@@ -49,11 +51,59 @@ int GridQuery(Rectangle area, int *out, int maxOut)
         {
             for (int i = cellHead[cy*GRID_W + cx]; i != -1; i = nextInCell[i])
             {
-                if (!CheckCollisionPointRec(units[i].pos, area)) continue;
+                if (!units[i].active || !CheckCollisionPointRec(units[i].pos, area)) continue;
                 if (count == maxOut) return count;
                 out[count++] = i;
             }
         }
     }
     return count;
+}
+
+// Check one cell for a closer enemy (helper for GridFindNearestEnemy).
+static void CheckCellForEnemy(int cx, int cy, Vector2 pos, int myTeam, int *best, float *bestDistSq)
+{
+    if (cx < 0 || cy < 0 || cx >= GRID_W || cy >= GRID_H) return;
+    for (int i = cellHead[cy*GRID_W + cx]; i != -1; i = nextInCell[i])
+    {
+        if (!units[i].active || units[i].team == myTeam) continue;
+        if (units[i].hp <= units[i].incomingDamage) continue;   // already doomed by projectiles in flight
+        float dx = units[i].pos.x - pos.x, dy = units[i].pos.y - pos.y;
+        float d = dx*dx + dy*dy;
+        if (d < *bestDistSq) { *bestDistSq = d; *best = i; }
+    }
+}
+
+// Search square rings of cells outward from `pos`. Units in ring r are at
+// least (r - 1) cells away, so once that's further than the best match so
+// far, no later ring can beat it and the search stops. Nearby enemies are
+// found after a handful of cells. Enemies that projectiles already in the air
+// will kill are skipped: targeting them would only waste attacks.
+int GridFindNearestEnemy(Vector2 pos, float maxDist, int myTeam)
+{
+    int cx = CellCoord(pos.x, GRID_W), cy = CellCoord(pos.y, GRID_H);
+    int best = -1;
+    float bestDistSq = maxDist*maxDist;
+    int maxRing = (int)(maxDist/GRID_CELL_SIZE) + 1;
+    int gridSize = (GRID_W > GRID_H) ? GRID_W : GRID_H;
+    if (maxRing > gridSize) maxRing = gridSize;
+
+    for (int r = 0; r <= maxRing; r++)
+    {
+        float ringMinDist = (float)(r - 1)*GRID_CELL_SIZE;
+        if (r > 1 && ringMinDist*ringMinDist > bestDistSq) break;
+
+        // The ring's top and bottom rows, then its left and right columns.
+        for (int x = cx - r; x <= cx + r; x++)
+        {
+            CheckCellForEnemy(x, cy - r, pos, myTeam, &best, &bestDistSq);
+            if (r > 0) CheckCellForEnemy(x, cy + r, pos, myTeam, &best, &bestDistSq);
+        }
+        for (int y = cy - r + 1; y <= cy + r - 1; y++)
+        {
+            CheckCellForEnemy(cx - r, y, pos, myTeam, &best, &bestDistSq);
+            CheckCellForEnemy(cx + r, y, pos, myTeam, &best, &bestDistSq);
+        }
+    }
+    return best;
 }

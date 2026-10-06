@@ -12,9 +12,13 @@
 // Repathing: if a unit stops getting closer to its waypoint for
 // UNIT_REPATH_TICKS (blocked by a crowd, pushed off its route, ...), it asks
 // for a fresh path from where it stands. After UNIT_MAX_REPATHS tries it gives up.
+//
+// Combat: attacking units are steered by combat.c (CombatUnitTick); idle units
+// let combat.c look for nearby enemies (CombatIdleTick).
 
 #include "units.h"
 #include "config.h"
+#include "combat.h"
 #include "grid.h"
 #include "map.h"
 #include "path.h"
@@ -23,8 +27,12 @@
 #include <math.h>
 #include <stdlib.h>
 
-#define UNIT_COLOR          (Color){ 220, 200, 60, 255 }
+#define PLAYER_COLOR        (Color){ 220, 200, 60, 255 }
+#define AI_COLOR            (Color){ 210, 60, 50, 255 }
+#define RANGED_DOT_COLOR    (Color){ 40, 30, 20, 255 }   // ranged units get a dark centre dot
 #define UNIT_SELECTED_COLOR (Color){ 60, 255, 90, 255 }
+#define HEALTH_BAR_W        14.0f
+#define HEALTH_BAR_H        3.0f
 #define UNIT_DRAW_SEGMENTS  12   // circle smoothness; units are small, keep it cheap
 #define MAX_NEIGHBOURS      32   // neighbours checked for separation
 #define UNIT_REPATH_TICKS   TICK_RATE           // 1 s without progress = ask for a new path
@@ -35,8 +43,9 @@
 
 Unit units[MAX_UNITS];
 static int activeCount = 0;
+static unsigned int nextSerial = 1;
 
-int UnitSpawn(Vector2 pos)
+int UnitSpawn(Vector2 pos, UnitType type, int team)
 {
     // Linear search is fine: spawning is rare compared to ticking.
     for (int i = 0; i < MAX_UNITS; i++)
@@ -44,9 +53,14 @@ int UnitSpawn(Vector2 pos)
         if (units[i].active) continue;
         units[i] = (Unit){
             .active = true,
+            .serial = nextSerial++,
+            .type = type,
+            .team = team,
+            .hp = UNIT_STATS[type].hp,
             .pos = pos, .prevPos = pos, .target = pos,
             .radius = UNIT_RADIUS,
-            .speed = UNIT_SPEED,
+            .speed = UNIT_STATS[type].speed,
+            .acquireTicks = i % COMBAT_ACQUIRE_TICKS,   // spread enemy checks across ticks
         };
         activeCount++;
         return i;
@@ -54,12 +68,22 @@ int UnitSpawn(Vector2 pos)
     return -1;
 }
 
+// The slot is simply marked free. Anything still pointing at this unit (an
+// attacker, a projectile) notices through UnitIsAlive() and lets go.
 void UnitDespawn(int id)
 {
     if (!units[id].active) return;
     units[id].active = false;
+    units[id].selected = false;
+    units[id].moving = false;
+    units[id].attacking = false;
     PathCancel(id);
     activeCount--;
+}
+
+bool UnitIsAlive(int id, unsigned int serial)
+{
+    return id >= 0 && id < MAX_UNITS && units[id].active && units[id].serial == serial;
 }
 
 int UnitsActiveCount(void)
@@ -120,6 +144,29 @@ static void StopMoving(int id)
     PathCancel(id);
 }
 
+void UnitStop(int id)
+{
+    StopMoving(id);
+}
+
+void UnitMoveTo(int id, Vector2 dest)
+{
+    Unit *u = &units[id];
+    u->target = dest;
+    u->moving = true;
+    u->repathsLeft = UNIT_MAX_REPATHS;
+    RequestPath(id);
+}
+
+Vector2 UnitStepToward(int id, Vector2 point)
+{
+    Unit *u = &units[id];
+    Vector2 to = Vector2Subtract(point, u->pos);
+    float dist = Vector2Length(to);
+    float maxStep = u->speed*TICK_DT;
+    return (dist <= maxStep) ? to : Vector2Scale(to, maxStep/dist);
+}
+
 // Ask for a new path, or give up if this order has used all its retries.
 static void Repath(int id)
 {
@@ -128,7 +175,7 @@ static void Repath(int id)
 }
 
 // This tick's step along the unit's path (zero while waiting for the path).
-static Vector2 FollowPath(int id)
+Vector2 UnitFollowPath(int id)
 {
     Unit *u = &units[id];
     Vector2 none = { 0 };
@@ -172,8 +219,14 @@ void UnitsTick(void)
         if (!u->active) continue;
 
         u->prevPos = u->pos;
+        if (u->cooldownTicks > 0) u->cooldownTicks--;
 
-        Vector2 step = u->moving ? FollowPath(i) : (Vector2){ 0 };
+        Vector2 step = { 0 };
+        if (u->attacking) step = CombatUnitTick(i);   // may kill other units
+        else if (u->moving) step = UnitFollowPath(i);
+        else CombatIdleTick(i);                       // look for enemies to attack
+
+        if (!u->active) continue;
         step = Vector2Add(step, SeparationPush(i));
         MoveWithTerrain(u, step);
     }
@@ -188,14 +241,26 @@ void UnitsDraw(Rectangle view, float alpha)
     Rectangle area = { view.x - margin, view.y - margin, view.width + margin*2.0f, view.height + margin*2.0f };
     int count = GridQuery(area, visible, MAX_UNITS);
 
-    // Everything here is a filled circle (same draw mode, no textures), so
+    // Everything here is a plain shape (same draw mode, no textures), so
     // raylib batches all of it into a few draw calls.
     for (int k = 0; k < count; k++)
     {
         const Unit *u = &units[visible[k]];
         Vector2 p = Vector2Lerp(u->prevPos, u->pos, alpha);
+
         if (u->selected) DrawCircleSector(p, u->radius + 2.0f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, UNIT_SELECTED_COLOR);
-        DrawCircleSector(p, u->radius, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, UNIT_COLOR);
+        DrawCircleSector(p, u->radius, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, (u->team == PLAYER_TEAM) ? PLAYER_COLOR : AI_COLOR);
+        if (u->type == UNIT_RANGED) DrawCircleSector(p, u->radius*0.4f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, RANGED_DOT_COLOR);
+
+        // Health bar, only once the unit has taken damage.
+        float maxHp = UNIT_STATS[u->type].hp;
+        if (u->hp < maxHp)
+        {
+            Rectangle bar = { p.x - HEALTH_BAR_W*0.5f, p.y - u->radius - 6.0f, HEALTH_BAR_W, HEALTH_BAR_H };
+            float frac = u->hp/maxHp;
+            DrawRectangleRec(bar, BLACK);
+            DrawRectangleRec((Rectangle){ bar.x, bar.y, bar.width*frac, bar.height }, (frac > 0.5f) ? GREEN : (frac > 0.25f) ? ORANGE : RED);
+        }
     }
 }
 
@@ -203,7 +268,7 @@ void UnitsDraw(Rectangle view, float alpha)
 // walk square rings outward from the centre and keep every spot a unit fits
 // on. Every unit gets its own spot, so a group never fights over one point.
 // Returns how many spots were found.
-static int FormationSpots(Vector2 dest, int count, Vector2 *spots)
+int UnitsOpenSpots(Vector2 dest, int count, Vector2 *spots)
 {
     int found = 0;
     for (int ring = 0; ring <= FORMATION_MAX_RINGS && found < count; ring++)
@@ -255,7 +320,7 @@ void UnitsOrderMove(const int *ids, int count, Vector2 dest)
     static int spotOrder[MAX_UNITS], unitOrder[MAX_UNITS];
     if (count <= 0) return;
 
-    int found = FormationSpots(dest, count, spots);
+    int found = UnitsOpenSpots(dest, count, spots);
 
     // Move direction: from the group's centre toward the destination.
     Vector2 centre = { 0 };
@@ -275,10 +340,22 @@ void UnitsOrderMove(const int *ids, int count, Vector2 dest)
     for (int k = 0; k < count; k++)
     {
         int id = ids[unitOrder[k]];
-        Unit *u = &units[id];
-        u->target = (k < found) ? spots[spotOrder[k]] : dest;   // more units than open spots: rare
-        u->moving = true;
-        u->repathsLeft = UNIT_MAX_REPATHS;
-        RequestPath(id);
+        units[id].attacking = false;
+        UnitMoveTo(id, (k < found) ? spots[spotOrder[k]] : dest);   // more units than open spots: rare
+    }
+}
+
+void UnitsOrderAttack(const int *ids, int count, int target)
+{
+    for (int k = 0; k < count; k++)
+    {
+        Unit *u = &units[ids[k]];
+        if (ids[k] == target || u->team == units[target].team) continue;
+        StopMoving(ids[k]);
+        u->attacking = true;
+        u->attackTarget = target;
+        u->attackTargetSerial = units[target].serial;
+        u->chaseDirect = false;
+        u->chaseTicks = 0;   // decide how to reach it on its very next tick
     }
 }

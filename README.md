@@ -27,16 +27,20 @@ make clean   # delete build folders
 | Left click / drag | Select unit / box select |
 | Shift + select | Add to selection |
 | Right click | Move selected units |
+| Right click on enemy | Attack it |
+| F1 | Debug: spawn a wave of 20 enemies |
 
 ## Code layout (`src/`)
 
 | File | System |
 |---|---|
-| `main.c` | Window, fixed 30 Hz sim loop, debug overlay |
-| `config.h` | Settings shared between systems |
+| `main.c` | Window, fixed 30 Hz sim loop, debug overlay, F1 debug key |
+| `config.h` | Shared settings: tick rate, teams, unit types and their stats table |
 | `map.c` | Tile map: generation, walkability, culled drawing |
 | `camera.c` | Pan / zoom, visible-area queries |
 | `units.c` | Unit pool, movement, separation, drawing |
 | `grid.c` | Spatial grid for nearby-unit queries |
 | `path.c` | A* pathfinding: request queue, per-frame time budget, path smoothing |
-| `input.c` | Selection and move orders |
+| `input.c` | Selection, move and attack orders |
+| `combat.c` | Attacking, chasing, auto-targeting (aggro), projectile pool |
+| `ai.c` | Enemy AI: every 2 s sends idle units at the nearest player unit |

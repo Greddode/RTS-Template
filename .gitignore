@@ -82,5 +82,6 @@ android.*
 # Build output
 build/
 build-web/
-
+# Caude Stuff
 CLAUDE.md
+NOTES.md

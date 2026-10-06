@@ -3,6 +3,9 @@
 //   Left drag           box select
 //   Shift + click/drag  add to the current selection
 //   Right click         move selected units there
+//   Right click enemy   attack that unit
+//
+// Only the player's own units (PLAYER_TEAM) can be selected.
 //
 // The drag start is stored in world coords, so the box stays anchored to the
 // ground even if the camera pans mid-drag.
@@ -44,10 +47,14 @@ static void ClearSelection(void)
 static void SelectInBox(Rectangle box)
 {
     int count = GridQuery(box, found, MAX_UNITS);
-    for (int k = 0; k < count; k++) units[found[k]].selected = true;
+    for (int k = 0; k < count; k++)
+    {
+        if (units[found[k]].team == PLAYER_TEAM) units[found[k]].selected = true;
+    }
 }
 
-static void SelectAtPoint(Vector2 point)
+// The closest unit of `team` under the cursor, or -1.
+static int UnitAtPoint(Vector2 point, int team)
 {
     float reach = UNIT_RADIUS + 2.0f;   // a little forgiveness around small units
     Rectangle area = { point.x - reach, point.y - reach, reach*2.0f, reach*2.0f };
@@ -57,20 +64,26 @@ static void SelectAtPoint(Vector2 point)
     float bestDist = reach;
     for (int k = 0; k < count; k++)
     {
+        if (units[found[k]].team != team) continue;
         float d = Vector2Distance(units[found[k]].pos, point);
         if (d <= bestDist) { best = found[k]; bestDist = d; }
     }
-    if (best != -1) units[best].selected = true;
+    return best;
 }
 
-static void OrderSelectedMove(Vector2 dest)
+// Right click: attack the enemy under the cursor, or move there.
+static void OrderSelected(Vector2 point)
 {
+    int enemy = UnitAtPoint(point, AI_TEAM);
+
     int count = 0;
     for (int i = 0; i < MAX_UNITS; i++)
     {
         if (units[i].active && units[i].selected) found[count++] = i;
     }
-    UnitsOrderMove(found, count, dest);
+
+    if (enemy != -1) UnitsOrderAttack(found, count, enemy);
+    else UnitsOrderMove(found, count, point);
 }
 
 void InputUpdate(void)
@@ -88,12 +101,16 @@ void InputUpdate(void)
         if (!additive) ClearSelection();
 
         if (IsDragging()) SelectInBox(DragBox());
-        else SelectAtPoint(CamMouseWorld());
+        else
+        {
+            int picked = UnitAtPoint(CamMouseWorld(), PLAYER_TEAM);
+            if (picked != -1) units[picked].selected = true;
+        }
 
         leftHeld = false;
     }
 
-    if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) OrderSelectedMove(CamMouseWorld());
+    if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) OrderSelected(CamMouseWorld());
 }
 
 void InputDrawSelectionBox(void)
