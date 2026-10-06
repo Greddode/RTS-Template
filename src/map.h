@@ -16,6 +16,7 @@ typedef enum { TILE_GRASS, TILE_DIRT, TILE_WATER, TILE_ROCK, TILE_COUNT } TileTy
 void     MapGenerate(unsigned int seed);   // same seed = same map
 TileType MapGetTile(int tx, int ty);       // outside the map counts as TILE_ROCK
 bool     MapIsWalkable(Vector2 worldPos);
+bool     MapNearestWalkable(Vector2 worldPos, int maxTiles, Vector2 *out); // centre of closest open tile
 void     MapDraw(Rectangle view);          // draws only tiles inside `view` (world coords)
 
 #endif

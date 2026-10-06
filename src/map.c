@@ -57,10 +57,41 @@ TileType MapGetTile(int tx, int ty)
     return (TileType)tiles[ty*MAP_W + tx];
 }
 
+static bool TileIsWalkable(int tx, int ty)
+{
+    TileType t = MapGetTile(tx, ty);
+    return t == TILE_GRASS || t == TILE_DIRT;
+}
+
 bool MapIsWalkable(Vector2 worldPos)
 {
-    TileType t = MapGetTile((int)floorf(worldPos.x / TILE_SIZE), (int)floorf(worldPos.y / TILE_SIZE));
-    return t == TILE_GRASS || t == TILE_DIRT;
+    return TileIsWalkable((int)floorf(worldPos.x / TILE_SIZE), (int)floorf(worldPos.y / TILE_SIZE));
+}
+
+// Search square "rings" of tiles outward from worldPos, up to maxTiles away.
+// The first ring containing an open tile wins; within it, the closest tile.
+bool MapNearestWalkable(Vector2 worldPos, int maxTiles, Vector2 *out)
+{
+    int cx = (int)floorf(worldPos.x / TILE_SIZE), cy = (int)floorf(worldPos.y / TILE_SIZE);
+    float bestDistSq = -1.0f;
+
+    for (int r = 0; r <= maxTiles; r++)
+    {
+        for (int y = cy - r; y <= cy + r; y++)
+        {
+            for (int x = cx - r; x <= cx + r; x++)
+            {
+                bool onRing = (x == cx - r || x == cx + r || y == cy - r || y == cy + r);
+                if (!onRing || !TileIsWalkable(x, y)) continue;
+
+                Vector2 centre = { (x + 0.5f)*TILE_SIZE, (y + 0.5f)*TILE_SIZE };
+                float dx = centre.x - worldPos.x, dy = centre.y - worldPos.y;
+                if (bestDistSq < 0.0f || dx*dx + dy*dy < bestDistSq) { bestDistSq = dx*dx + dy*dy; *out = centre; }
+            }
+        }
+        if (bestDistSq >= 0.0f) return true;
+    }
+    return false;
 }
 
 void MapDraw(Rectangle view)

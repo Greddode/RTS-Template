@@ -18,6 +18,8 @@ typedef struct Unit {
     Vector2 target;     // where the unit is walking to, if moving
     float   radius;
     float   speed;
+    float   bestDist;   // closest it has got to `target` during this move
+    int     stuckTicks; // ticks since bestDist last improved
 } Unit;
 
 extern Unit units[MAX_UNITS];

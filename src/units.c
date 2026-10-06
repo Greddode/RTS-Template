@@ -7,18 +7,23 @@
 // Movement: each tick a moving unit steps toward its target, gets pushed away
 // from units it overlaps (separation), and refuses to step onto unwalkable
 // tiles. Units walk in straight lines - pathfinding will plug in here later.
+// A unit that stops getting closer to its target (blocked by water, a crowd,
+// ...) gives up after UNIT_GIVE_UP_TICKS instead of pushing forever.
 
 #include "units.h"
 #include "config.h"
 #include "grid.h"
 #include "map.h"
 #include "raymath.h"
+#include <float.h>
 #include <math.h>
 
 #define UNIT_COLOR          (Color){ 220, 200, 60, 255 }
 #define UNIT_SELECTED_COLOR (Color){ 60, 255, 90, 255 }
 #define UNIT_DRAW_SEGMENTS  12   // circle smoothness; units are small, keep it cheap
 #define MAX_NEIGHBOURS      32   // neighbours checked for separation
+#define UNIT_GIVE_UP_TICKS  (TICK_RATE*3/2)   // 1.5 s without progress = give up
+#define DEST_SEARCH_TILES   8    // how far to look for open ground around a blocked destination
 
 Unit units[MAX_UNITS];
 static int activeCount = 0;
@@ -84,12 +89,20 @@ static Vector2 SeparationPush(int self)
     return push;
 }
 
-// Apply a step, but never onto unwalkable tiles. X and Y are tried separately
-// so units slide along walls instead of sticking to them.
+// True if a unit's body at `pos` is clear of water/rock. Checks the four edge
+// points of the circle: cheap, and close enough for small round units.
+static bool UnitFits(Vector2 pos, float r)
+{
+    return MapIsWalkable((Vector2){ pos.x + r, pos.y }) && MapIsWalkable((Vector2){ pos.x - r, pos.y }) &&
+           MapIsWalkable((Vector2){ pos.x, pos.y + r }) && MapIsWalkable((Vector2){ pos.x, pos.y - r });
+}
+
+// Apply a step, but never into water/rock. X and Y are tried separately so
+// units slide along walls instead of sticking to them.
 static void MoveWithTerrain(Unit *u, Vector2 step)
 {
-    if (MapIsWalkable((Vector2){ u->pos.x + step.x, u->pos.y })) u->pos.x += step.x;
-    if (MapIsWalkable((Vector2){ u->pos.x, u->pos.y + step.y })) u->pos.y += step.y;
+    if (UnitFits((Vector2){ u->pos.x + step.x, u->pos.y }, u->radius)) u->pos.x += step.x;
+    if (UnitFits((Vector2){ u->pos.x, u->pos.y + step.y }, u->radius)) u->pos.y += step.y;
 }
 
 void UnitsTick(void)
@@ -109,6 +122,9 @@ void UnitsTick(void)
             float maxStep = u->speed*TICK_DT;
             if (dist <= maxStep) { step = toTarget; u->moving = false; }
             else step = Vector2Scale(toTarget, maxStep/dist);
+
+            if (dist < u->bestDist - 0.5f) { u->bestDist = dist; u->stuckTicks = 0; }
+            else if (++u->stuckTicks > UNIT_GIVE_UP_TICKS) u->moving = false;
         }
 
         step = Vector2Add(step, SeparationPush(i));
@@ -137,7 +153,8 @@ void UnitsDraw(Rectangle view, float alpha)
 }
 
 // Each unit gets its own spot in a square formation around `dest`, so a group
-// doesn't fight over a single point when it arrives.
+// doesn't fight over a single point when it arrives. Spots that are off the
+// map or in water/rock are moved to the nearest open tile.
 void UnitsOrderMove(const int *ids, int count, Vector2 dest)
 {
     if (count <= 0) return;
@@ -149,7 +166,14 @@ void UnitsOrderMove(const int *ids, int count, Vector2 dest)
     for (int k = 0; k < count; k++)
     {
         Unit *u = &units[ids[k]];
-        u->target = (Vector2){ dest.x - half + (k % side)*spacing, dest.y - half + (k / side)*spacing };
+        Vector2 spot = { dest.x - half + (k % side)*spacing, dest.y - half + (k / side)*spacing };
+        spot.x = Clamp(spot.x, 0.0f, MAP_PIXEL_W - 1.0f);
+        spot.y = Clamp(spot.y, 0.0f, MAP_PIXEL_H - 1.0f);
+        if (!UnitFits(spot, u->radius)) MapNearestWalkable(spot, DEST_SEARCH_TILES, &spot);
+
+        u->target = spot;
         u->moving = true;
+        u->bestDist = FLT_MAX;
+        u->stuckTicks = 0;
     }
 }
