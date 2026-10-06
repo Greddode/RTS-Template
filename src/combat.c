@@ -13,6 +13,9 @@
 // can be reused by a new unit; the serial tells them apart, so nobody ends up
 // attacking the newcomer by mistake.
 //
+// Hold position: a holding unit only picks targets already within its attack
+// range, and drops a target that leaves range instead of chasing it.
+//
 // Auto-targeting: idle and attack-moving units look for the nearest enemy within
 // COMBAT_AGGRO_RADIUS using the spatial grid, and attack it.
 //
@@ -44,6 +47,13 @@ typedef struct Projectile {
 
 static Projectile projectiles[MAX_PROJECTILES];
 static int projectileCount = 0;
+
+// How far a unit looks for new targets: its aggro radius, or only its own
+// attack range when holding position.
+static float SearchRadius(const Unit *u)
+{
+    return u->holdPosition ? UNIT_STATS[u->type].range : COMBAT_AGGRO_RADIUS;
+}
 
 static bool IsDoomed(int id)
 {
@@ -86,7 +96,7 @@ Vector2 CombatUnitTick(int id)
     if (!alive || IsDoomed(u->attackTarget))
     {
         // Switch right away (same tick) to the nearest enemy worth attacking.
-        int next = GridFindNearestEnemy(u->pos, COMBAT_AGGRO_RADIUS, u->team);
+        int next = GridFindNearestEnemy(u->pos, SearchRadius(u), u->team);
         if (next != -1) UnitsOrderAttack(&id, 1, next);
         else if (!alive)
         {
@@ -116,6 +126,13 @@ Vector2 CombatUnitTick(int id)
         return none;
     }
 
+    // Out of range while holding: let it go (the next scan finds anything in range).
+    if (u->holdPosition)
+    {
+        u->attacking = false;
+        return none;
+    }
+
     // Out of range: chase. Re-plan every CHASE_RETHINK_TICKS.
     if (--u->chaseTicks <= 0)
     {
@@ -141,7 +158,7 @@ void CombatAcquireTick(int id)
     if (--u->acquireTicks > 0) return;
     u->acquireTicks = COMBAT_ACQUIRE_TICKS;
 
-    int enemy = GridFindNearestEnemy(u->pos, COMBAT_AGGRO_RADIUS, u->team);
+    int enemy = GridFindNearestEnemy(u->pos, SearchRadius(u), u->team);
     if (enemy != -1) UnitsOrderAttack(&id, 1, enemy);
 }
 

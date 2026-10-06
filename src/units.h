@@ -30,6 +30,7 @@ typedef struct Unit {
     int     repathsLeft; // new paths it may still ask for before giving up on this order
     bool    attackMove;      // attack-move order: fight enemies met on the way...
     Vector2 attackMoveDest;  // ...then carry on to this spot
+    bool    holdPosition;    // hold order: only fight enemies already in range, never chase
 
     // Combat (combat.c)
     bool         attacking;
@@ -55,6 +56,8 @@ void UnitsDraw(Rectangle view, float alpha); // alpha: 0..1, how far we are betw
 void UnitsOrderMove(const int *ids, int count, Vector2 dest);
 void UnitsOrderAttack(const int *ids, int count, int target);
 void UnitsOrderAttackMove(const int *ids, int count, Vector2 dest);   // move, but fight anything met on the way
+void UnitsOrderStop(const int *ids, int count);   // drop all orders and go idle
+void UnitsOrderHold(const int *ids, int count);   // stop, then stay put: attack only what's in range
 int  UnitsOpenSpots(Vector2 centre, int count, Vector2 *out);  // free spots around centre, closest first
 
 // Movement helpers used by combat.c

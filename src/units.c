@@ -19,6 +19,10 @@
 // Attack-move is a normal move order plus the `attackMove` flag: while
 // walking, the unit scans for enemies like an idle unit does. When a fight
 // ends with no enemies left nearby, combat.c sends it on to attackMoveDest.
+//
+// Stop drops every order (the unit is idle, so it still auto-attacks).
+// Hold is stop plus `holdPosition`: combat.c then only lets it target enemies
+// already in range, and never chase.
 
 #include "units.h"
 #include "config.h"
@@ -346,6 +350,7 @@ void UnitsOrderMove(const int *ids, int count, Vector2 dest)
         int id = ids[unitOrder[k]];
         units[id].attacking = false;
         units[id].attackMove = false;
+        units[id].holdPosition = false;
         UnitMoveTo(id, (k < found) ? spots[spotOrder[k]] : dest);   // more units than open spots: rare
     }
 }
@@ -375,4 +380,22 @@ void UnitsOrderAttack(const int *ids, int count, int target)
         u->chaseDirect = false;
         u->chaseTicks = 0;   // decide how to reach it on its very next tick
     }
+}
+
+void UnitsOrderStop(const int *ids, int count)
+{
+    for (int k = 0; k < count; k++)
+    {
+        Unit *u = &units[ids[k]];
+        StopMoving(ids[k]);
+        u->attacking = false;
+        u->attackMove = false;
+        u->holdPosition = false;
+    }
+}
+
+void UnitsOrderHold(const int *ids, int count)
+{
+    UnitsOrderStop(ids, count);
+    for (int k = 0; k < count; k++) units[ids[k]].holdPosition = true;
 }

@@ -39,6 +39,7 @@ static void DrawOverlay(void);
 int main(void)
 {
     InitWindow(SCREEN_W, SCREEN_H, "RTS Kit");
+    SetExitKey(KEY_NULL);   // Esc is used to cancel orders; close with the window's X
 
     MapGenerate(MAP_SEED);
     CamInit();
@@ -130,6 +131,6 @@ static void DrawOverlay(void)
     DrawText(TextFormat("Sim tick: %.2f ms", lastTickMs), 10, 52, 16, RAYWHITE);
     DrawText(TextFormat("Paths queued: %d   Path: %.2f ms", PathQueueLength(), PathLastFrameMs()), 10, 72, 16, RAYWHITE);
 
-    const char *help = "Arrows/MMB: pan   Wheel: zoom   LMB: select   Shift: add   RMB: move / attack   A+RMB: attack-move   F1: enemy wave";
+    const char *help = "Arrows/MMB: pan  Wheel: zoom  LMB: select  Shift: add  RMB: move/attack  A+RMB: attack-move  S: stop  H: hold  F1: wave";
     DrawText(help, 10, GetScreenHeight() - 24, 16, RAYWHITE);
 }

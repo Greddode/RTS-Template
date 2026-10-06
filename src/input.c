@@ -4,7 +4,9 @@
 //   Shift + click/drag  add to the current selection
 //   Right click         move selected units there
 //   Right click enemy   attack that unit
-//   A, then right click attack-move there (left click cancels)
+//   A, then right click attack-move there (left click or Esc cancels)
+//   S                   stop: drop all orders
+//   H                   hold position: attack only what's in range, never chase
 //
 // Only the player's own units (PLAYER_TEAM) can be selected.
 //
@@ -96,7 +98,11 @@ static void OrderSelected(Vector2 point)
 
     if (enemy != -1)
     {
-        for (int k = 0; k < count; k++) units[found[k]].attackMove = false;   // a direct order replaces attack-move
+        for (int k = 0; k < count; k++)   // a direct order replaces attack-move / hold
+        {
+            units[found[k]].attackMove = false;
+            units[found[k]].holdPosition = false;
+        }
         UnitsOrderAttack(found, count, enemy);
     }
     else UnitsOrderMove(found, count, point);
@@ -105,6 +111,12 @@ static void OrderSelected(Vector2 point)
 void InputUpdate(void)
 {
     if (IsKeyPressed(KEY_A)) attackMoveArmed = true;
+    if (IsKeyPressed(KEY_S) || IsKeyPressed(KEY_H))
+    {
+        int count = CollectSelected();
+        if (IsKeyPressed(KEY_S)) UnitsOrderStop(found, count);
+        else UnitsOrderHold(found, count);
+    }
 
     if (attackMoveArmed)
     {
@@ -120,7 +132,7 @@ void InputUpdate(void)
             attackMoveArmed = false;
             return;   // this click was the attack-move, not a normal move order
         }
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsKeyPressed(KEY_ESCAPE))
         {
             attackMoveArmed = false;   // cancel
             return;

@@ -28,8 +28,12 @@ make clean   # delete build folders
 | Shift + select | Add to selection |
 | Right click | Move selected units |
 | Right click on enemy | Attack it |
-| A, then right click | Attack-move: walk there, fighting any enemies met on the way (left click cancels) |
+| A, then right click | Attack-move: walk there, fighting any enemies met on the way (left click or Esc cancels) |
+| S | Stop: drop all orders (units still fight enemies that come close) |
+| H | Hold position: stay put, only attack enemies already in range |
 | F1 | Debug: spawn a wave of 20 enemies |
+
+Esc does **not** quit (it cancels orders); close the window to exit.
 
 ## Code layout (`src/`)
 
