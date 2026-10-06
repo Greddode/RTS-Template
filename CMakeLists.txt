@@ -1,9 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 project(rts C)
 
-set(CMAKE_C_STANDARD 99)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS OFF)           # plain C99 (-std=c99), not GNU C
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)  # lets editors (VSCode/clangd) understand the code
 
 # --- raylib ------------------------------------------------------------------
@@ -28,15 +25,20 @@ file(GLOB_RECURSE GAME_SOURCES CONFIGURE_DEPENDS src/*.c)
 add_executable(game ${GAME_SOURCES})
 target_include_directories(game PRIVATE src src/game src/editor)   # so #include "units.h" works from any folder
 target_compile_options(game PRIVATE -Wall -Wextra)
+# Strict C99 for OUR code only. (Set globally, it would also apply to raylib
+# when the web build compiles it, and raylib's audio code needs GNU C there.)
+set_target_properties(game PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_link_libraries(game PRIVATE raylib m)
 
 # Map files (maps/*.map) ship with the game.
 if (EMSCRIPTEN)
     set_target_properties(game PROPERTIES SUFFIX ".html")  # emit game.html + .js + .wasm
+    set_property(TARGET game APPEND PROPERTY LINK_DEPENDS ${CMAKE_SOURCE_DIR}/src/editor/web_download.js)   # relink when it changes
     target_link_options(game PRIVATE
         -sUSE_GLFW=3              # raylib's window/input layer, provided by Emscripten
         -sALLOW_MEMORY_GROWTH=1   # let the heap grow (lots of units later)
         --preload-file ${CMAKE_SOURCE_DIR}/maps@/maps   # bundle maps/ into the browser's virtual file system
+        --js-library ${CMAKE_SOURCE_DIR}/src/editor/web_download.js   # the editor's Save -> browser download
     )
 else()
     # Copy maps/ next to the executable on every build, even if no code changed,

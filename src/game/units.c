@@ -377,6 +377,7 @@ void UnitsOrderMove(const int *ids, int count, Vector2 dest)
         units[id].holdPosition = false;
         units[id].gatherState = GATHER_NONE;
         units[id].buildOrder = false;
+        units[id].leashed = false;
         UnitMoveTo(id, (k < found) ? spots[spotOrder[k]] : dest);   // more units than open spots: rare
     }
 }
@@ -400,6 +401,7 @@ static void SetAttackTarget(int id, int target, unsigned int serial, bool isBuil
     StopMoving(id);
     u->gatherState = GATHER_NONE;
     u->buildOrder = false;
+    u->leashed = false;   // an order; combat.c re-sets it for auto-targeting
     u->attacking = true;
     u->attackTargetIsBuilding = isBuilding;
     u->attackTarget = target;
@@ -437,6 +439,7 @@ void UnitsOrderStop(const int *ids, int count)
         u->holdPosition = false;
         u->gatherState = GATHER_NONE;
         u->buildOrder = false;
+        u->leashed = false;
     }
 }
 

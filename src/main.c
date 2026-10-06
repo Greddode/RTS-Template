@@ -368,6 +368,10 @@ static void UpdateDrawFrame(void)
 
     EndDrawing();
 
+#if defined(__EMSCRIPTEN__)
+    if (quitRequested) emscripten_cancel_main_loop();   // a browser tab can't close itself; just stop
+#endif
+
     // Count frames ourselves: raylib's GetFPS() only samples when it's called,
     // and in the menu nothing else calls it, so it would report nonsense.
     perfFrames++;
@@ -384,7 +388,7 @@ static void UpdateDrawFrame(void)
 static void DrawOverlay(void)
 {
     float x = Ui(10.0f), size = Ui(16.0f), line = Ui(20.0f);
-    UiPanel((Rectangle){ 0, 0, Ui(360.0f), Ui(140.0f) });
+    UiPanel((Rectangle){ 0, 0, Ui(420.0f), Ui(140.0f) });
     UiLabel(TextFormat("%d FPS", GetFPS()), x, Ui(8.0f), Ui(20.0f), LIME);
     UiLabel(TextFormat("Units: %d   Projectiles: %d", UnitsActiveCount(), CombatProjectileCount()), x, Ui(8.0f) + line*1.2f, size, RAYWHITE);
     UiLabel(TextFormat("Sim tick: %.2f ms", lastTickMs), x, Ui(8.0f) + line*2.2f, size, RAYWHITE);

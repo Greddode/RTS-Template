@@ -37,7 +37,8 @@
 #include <string.h>
 
 #if defined(__EMSCRIPTEN__)
-    #include <emscripten/emscripten.h>
+    // In web_download.js: gives a file from the in-memory file system to the browser as a download.
+    extern void EditorDownloadFile(const char *path, const char *name);
 #endif
 
 #define UNDO_STEPS     32
@@ -275,11 +276,10 @@ static void Save(void)
 #if defined(__EMSCRIPTEN__)
     // Browsers can't write to disk: write into the in-memory file system,
     // then hand the file to the browser as a download.
-    const char *path = TextFormat("/tmp/%s", file);
+    char path[300];
+    snprintf(path, sizeof(path), "/tmp/%s", file);
     bool ok = WriteAndCheck(path);
-    emscripten_run_script(TextFormat(
-        "(function(){var d=Module.FS.readFile('%s');var a=document.createElement('a');"
-        "a.href=URL.createObjectURL(new Blob([d]));a.download='%s';a.click();})()", path, file));
+    EditorDownloadFile(path, file);
     if (ok) UiShowMessageFor(TextFormat("Downloaded %s (browsers can't save to disk directly)", file), MESSAGE_LONG);
 #else
     char path[300];

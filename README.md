@@ -6,7 +6,8 @@ An RTS game template in C using [raylib](https://www.raylib.com/). Builds for Li
 
 - CMake 3.24+
 - Desktop: raylib (`sudo pacman -S raylib`)
-- Web: Emscripten (`sudo pacman -S emscripten`, then open a new terminal)
+- Web: Emscripten (`sudo pacman -S emscripten`, then open a new terminal). The first web build
+  downloads and compiles raylib, so it takes a minute.
 
 ## Build & run
 
@@ -51,6 +52,14 @@ in map files automatically. Each team needs at least one building. Mistakes (unk
 wrong row length, object on water or outside the map, overlapping buildings, ...) are shown on
 screen as `file:line: what's wrong`, and the game plays the Random map instead.
 
+## Web build
+
+The same C code runs on desktop and in the browser. The few differences are `#if defined(__EMSCRIPTEN__)`
+blocks: the browser drives the main loop, Exit buttons are hidden, maps come from `/maps`
+(bundled with `--preload-file`), and the editor's Save downloads the file (Load is off).
+`make serve` builds it and serves it at http://localhost:8080/game.html. Opening the `.html`
+file directly doesn't work: browsers won't load the game's files from `file://`.
+
 ## Map editor
 
 Open it from the main menu (**Map Editor**, starts a blank 64×64 map) or press **F2** while
@@ -80,6 +89,7 @@ Save downloads the file instead (browsers can't write to disk), and Load is disa
 Every 2 seconds the AI:
 
 1. **Barracks:** once it has 3 workers and 150 gold, one worker builds a Barracks near its base.
+   If gold piles up past 600 while every Barracks has a full queue, it builds another (up to 3).
 2. **Workers:** each base aims for **8 workers per reachable gold node** near it (at most **16**),
    training at the base that needs them most. When every base is saturated it stops, and the
    gold goes into the army.
@@ -90,7 +100,7 @@ Every 2 seconds the AI:
    time, at most 3 bases. If the builder dies, the site is cancelled (refunded) and that node
    isn't tried again.
 4. **Army:** idle workers go to the near node with the fewest workers; combat units attack the
-   nearest player unit or building. The Barracks queues a Melee or Ranged unit every 5 seconds.
+   nearest player unit or building. Every 5 seconds each Barracks with room queues a Melee or Ranged unit.
 
 Every number (thresholds, distances, caps, timings) is a named constant in the **AI tuning**
 block of `config.h`. The debug overlay (top left) shows the AI's gold, workers (have/target),
@@ -132,6 +142,10 @@ generated from `CONTROLS` and the key bindings in `config.h`; this table mirrors
 | F2 | Map editor on the current map (F2 / Exit returns to the paused game) |
 | Ctrl+Z (editor) | Undo tile painting |
 
+**Idle units defend themselves on a leash:** an idle unit attacks enemies that come close, but
+chases at most `COMBAT_LEASH_TILES` (6) tiles from where it was standing, then walks back (also
+after the fight ends). Your attack and attack-move orders aren't leashed; hold position never chases.
+
 Esc never quits the game directly; use Exit in a menu or close the window. (The web build has no Exit buttons.)
 
 ## Code layout
@@ -148,6 +162,7 @@ and `src/editor/` for the editor.
 | `game/map.c` | Tile map: generated "Random" map, real size of the loaded map, walkability (terrain + building-blocked tiles), culled drawing |
 | `game/mapfile.c` | Map files: `MapDoc` (tiles + objects), parse + full validation with file:line errors, load into the game, write, scan the folder |
 | `editor/editor.c` | Map editor: tile brushes with undo, object tools, save / load / test play |
+| `editor/web_download.js` | Web build only: the editor's Save hands the file to the browser as a download |
 | `game/camera.c` | Pan / zoom, visible-area queries |
 | `game/units.c` | Unit pool, movement, separation, drawing |
 | `game/grid.c` | Spatial grid for nearby-unit queries |

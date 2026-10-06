@@ -43,6 +43,8 @@ typedef struct Unit {
     int          cooldownTicks;       // ticks until it can attack again
     int          acquireTicks;        // idle: ticks until it next looks for enemies
     int          chaseTicks;          // attacking: ticks until it re-plans its chase
+    bool         leashed;             // chasing on its own (auto-target): may not stray far from...
+    Vector2      leashHome;           // ...here, where it was standing
 
     // Gathering (economy.c) - workers only
     GatherState  gatherState;

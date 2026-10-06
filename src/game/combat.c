@@ -18,6 +18,13 @@
 // Hold position: a holding unit only picks targets already within its attack
 // range, and drops a target that leaves range instead of chasing it.
 //
+// Leash: an idle unit that picks a target on its own remembers where it was
+// standing. If the chase takes it more than COMBAT_LEASH_TILES from there, it
+// gives up and walks back (a plain move: units only look for new targets
+// when standing still, so it doesn't turn round half way). It also walks back
+// once the fight is over. Picking the next target after a kill keeps the same
+// home spot. Orders from the player or AI and attack-move aren't leashed.
+//
 // Auto-targeting: idle and attack-moving units look for the nearest enemy within
 // COMBAT_AGGRO_RADIUS using the spatial grid, and attack it. Enemy units come
 // first; enemy buildings only when no unit is in reach. Workers don't
@@ -100,15 +107,21 @@ static void DealDamage(bool isBuilding, int target, float damage)
 }
 
 // Attack the nearest enemy worth attacking within `radius`: units first, then
-// buildings. Returns false if there's nothing to attack.
+// buildings. Returns false if there's nothing to attack. An auto-target: the
+// unit's leash (if any) is kept, since the order itself clears it.
 static bool AttackNearest(int id, float radius)
 {
     Unit *u = &units[id];
+    bool leashed = u->leashed;
+    Vector2 home = u->leashHome;
     int enemy = GridFindNearestEnemy(u->pos, radius, u->team);
-    if (enemy != -1) { UnitsOrderAttack(&id, 1, enemy); return true; }
-    int building = BuildingsFindNearestEnemy(u->pos, radius, u->team);
-    if (building != -1) { UnitsOrderAttackBuilding(&id, 1, building); return true; }
-    return false;
+    int building = (enemy == -1) ? BuildingsFindNearestEnemy(u->pos, radius, u->team) : -1;
+    if (enemy != -1) UnitsOrderAttack(&id, 1, enemy);
+    else if (building != -1) UnitsOrderAttackBuilding(&id, 1, building);
+    else return false;
+    u->leashed = leashed;
+    u->leashHome = home;
+    return true;
 }
 
 // Fire at a target. Uses a free projectile slot; if the pool is full (very
@@ -147,9 +160,11 @@ Vector2 CombatUnitTick(int id)
             if (alive) return none;   // only a doomed target left: hold fire, it's dying anyway
 
             // Nothing nearby: an attack-moving unit carries on to its
-            // destination; anyone else goes idle and keeps scanning.
+            // destination, a leashed one walks back home; anyone else goes
+            // idle and keeps scanning.
             u->attacking = false;
             if (u->attackMove) UnitMoveTo(id, u->attackMoveDest);
+            else if (u->leashed) { u->leashed = false; UnitMoveTo(id, u->leashHome); }
             else UnitStop(id);
             return none;
         }
@@ -176,6 +191,15 @@ Vector2 CombatUnitTick(int id)
     if (u->holdPosition)
     {
         u->attacking = false;
+        return none;
+    }
+
+    // Chasing on its own and too far from home: give up and walk back.
+    if (u->leashed && Vector2Distance(u->pos, u->leashHome) > COMBAT_LEASH_TILES*TILE_SIZE)
+    {
+        u->attacking = false;
+        u->leashed = false;
+        UnitMoveTo(id, u->leashHome);
         return none;
     }
 
@@ -207,7 +231,14 @@ void CombatAcquireTick(int id)
     if (--u->acquireTicks > 0) return;
     u->acquireTicks = COMBAT_ACQUIRE_TICKS;
 
-    AttackNearest(id, SearchRadius(u));
+    // Standing idle (not attack-moving, not holding): this chase is on a leash.
+    bool idle = !u->attackMove && !u->holdPosition;
+    Vector2 here = u->pos;
+    if (AttackNearest(id, SearchRadius(u)) && idle)
+    {
+        u->leashed = true;
+        u->leashHome = here;
+    }
 }
 
 // Projectiles home in on their target. If it dies first, they vanish.

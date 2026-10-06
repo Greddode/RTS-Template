@@ -88,3 +88,6 @@ NOTES.md
 
 # Our map files also end in .map (the *.map rule above is for C linker output)
 !maps/*.map
+
+# Our own JavaScript source (the *.js rule above is for web build output)
+!src/**/*.js

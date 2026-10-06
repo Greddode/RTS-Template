@@ -63,6 +63,11 @@ static const UnitStats UNIT_STATS[UNIT_TYPE_COUNT] = {
     [UNIT_WORKER] = { "Worker", BUILDING_BASE,     KEY_W,   40.0f,  4.0f,  16.0f,  1.0f,     70.0f,  50,   5.0f },
 };
 
+// Auto-targeting leash: an idle unit that starts chasing an enemy on its own
+// gives up once it's this far from where it was standing, and walks back.
+// (Player / AI orders and attack-move aren't leashed.)
+#define COMBAT_LEASH_TILES 6
+
 // Game states (main.c switches between them).
 typedef enum { STATE_MENU, STATE_PLAYING, STATE_PAUSED, STATE_VICTORY, STATE_DEFEAT, STATE_EDITOR } GameState;
 
@@ -132,5 +137,8 @@ static const ControlInfo CONTROLS[] = {
 #define AI_SAVE_FOR_EXPANSION   1               // 1: pause combat training while saving for an expansion
 #define AI_MAX_BASES            3               // cap on bases (finished or being built)
 #define AI_MAX_FAILED_NODES     16              // nodes it gave up expanding to (builder died) are remembered
+#define AI_BARRACKS_QUEUE       2               // combat units queued per Barracks; "full" means this many
+#define AI_EXTRA_BARRACKS_GOLD  600             // more gold banked than this, every Barracks full: build another
+#define AI_MAX_BARRACKS         3               // cap on Barracks (finished or being built)
 
 #endif
