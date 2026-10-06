@@ -78,3 +78,9 @@ android.*
 *.js
 !src/minshell.html
 !src/shell.html
+
+# Build output
+build/
+build-web/
+
+CLAUDE.md
