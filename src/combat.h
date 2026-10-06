@@ -10,7 +10,7 @@
 
 // Called by UnitsTick() for each unit.
 Vector2 CombatUnitTick(int id);   // attacking unit: chase / hit; returns its movement step
-void    CombatIdleTick(int id);   // idle unit: start attacking a nearby enemy if there is one
+void    CombatAcquireTick(int id); // idle or attack-moving unit: attack a nearby enemy if there is one
 
 void CombatProjectilesTick(void);  // move projectiles, apply hits; once per sim tick
 void CombatProjectilesDraw(Rectangle view, float alpha);

@@ -13,7 +13,7 @@
 // can be reused by a new unit; the serial tells them apart, so nobody ends up
 // attacking the newcomer by mistake.
 //
-// Auto-targeting: idle units look for the nearest enemy within
+// Auto-targeting: idle and attack-moving units look for the nearest enemy within
 // COMBAT_AGGRO_RADIUS using the spatial grid, and attack it.
 //
 // Overkill: each unit tracks `incomingDamage`, the damage in projectiles
@@ -90,8 +90,11 @@ Vector2 CombatUnitTick(int id)
         if (next != -1) UnitsOrderAttack(&id, 1, next);
         else if (!alive)
         {
-            u->attacking = false;   // nothing nearby: go idle and keep scanning
-            UnitStop(id);
+            // Nothing nearby: an attack-moving unit carries on to its
+            // destination; anyone else goes idle and keeps scanning.
+            u->attacking = false;
+            if (u->attackMove) UnitMoveTo(id, u->attackMoveDest);
+            else UnitStop(id);
             return none;
         }
         else return none;           // only a doomed target left: hold fire, it's dying anyway
@@ -132,7 +135,7 @@ Vector2 CombatUnitTick(int id)
     return u->moving ? UnitFollowPath(id) : none;
 }
 
-void CombatIdleTick(int id)
+void CombatAcquireTick(int id)
 {
     Unit *u = &units[id];
     if (--u->acquireTicks > 0) return;

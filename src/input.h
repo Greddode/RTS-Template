@@ -3,6 +3,6 @@
 #define INPUT_H_INCLUDED
 
 void InputUpdate(void);            // call once per frame, after CamUpdate()
-void InputDrawSelectionBox(void);  // call inside BeginMode2D()
+void InputDraw(void);              // selection box + order markers; call inside BeginMode2D()
 
 #endif

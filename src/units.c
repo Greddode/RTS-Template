@@ -13,8 +13,12 @@
 // UNIT_REPATH_TICKS (blocked by a crowd, pushed off its route, ...), it asks
 // for a fresh path from where it stands. After UNIT_MAX_REPATHS tries it gives up.
 //
-// Combat: attacking units are steered by combat.c (CombatUnitTick); idle units
-// let combat.c look for nearby enemies (CombatIdleTick).
+// Combat: attacking units are steered by combat.c (CombatUnitTick); idle and
+// attack-moving units let combat.c look for nearby enemies (CombatAcquireTick).
+//
+// Attack-move is a normal move order plus the `attackMove` flag: while
+// walking, the unit scans for enemies like an idle unit does. When a fight
+// ends with no enemies left nearby, combat.c sends it on to attackMoveDest.
 
 #include "units.h"
 #include "config.h"
@@ -190,7 +194,7 @@ Vector2 UnitFollowPath(int id)
         // End of the path. If it stopped short of the target (partial path, or
         // pushed off it on the way), try again from here.
         if (Vector2Distance(u->pos, u->target) > UNIT_ARRIVE_DIST) Repath(id);
-        else StopMoving(id);
+        else { StopMoving(id); u->attackMove = false; }   // arrived: order complete
         return none;
     }
 
@@ -222,9 +226,9 @@ void UnitsTick(void)
         if (u->cooldownTicks > 0) u->cooldownTicks--;
 
         Vector2 step = { 0 };
+        if (!u->attacking && (!u->moving || u->attackMove)) CombatAcquireTick(i);   // look for enemies
         if (u->attacking) step = CombatUnitTick(i);   // may kill other units
         else if (u->moving) step = UnitFollowPath(i);
-        else CombatIdleTick(i);                       // look for enemies to attack
 
         if (!u->active) continue;
         step = Vector2Add(step, SeparationPush(i));
@@ -341,7 +345,20 @@ void UnitsOrderMove(const int *ids, int count, Vector2 dest)
     {
         int id = ids[unitOrder[k]];
         units[id].attacking = false;
+        units[id].attackMove = false;
         UnitMoveTo(id, (k < found) ? spots[spotOrder[k]] : dest);   // more units than open spots: rare
+    }
+}
+
+// Same formation and pathing as a move order; the flag makes the units fight
+// whatever they meet on the way. Each remembers its own formation spot.
+void UnitsOrderAttackMove(const int *ids, int count, Vector2 dest)
+{
+    UnitsOrderMove(ids, count, dest);
+    for (int k = 0; k < count; k++)
+    {
+        units[ids[k]].attackMove = true;
+        units[ids[k]].attackMoveDest = units[ids[k]].target;
     }
 }
 

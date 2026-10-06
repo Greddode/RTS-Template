@@ -1,5 +1,5 @@
 // camera.c - Camera controls.
-//   WASD / arrow keys   pan
+//   Arrow keys          pan (letter keys are kept free for unit commands)
 //   Middle mouse drag   pan
 //   Mouse wheel         zoom toward the cursor
 //
@@ -32,10 +32,10 @@ void CamUpdate(float dt)
 
     // Keyboard pan. Dividing by zoom keeps the on-screen speed the same at any zoom.
     Vector2 dir = { 0 };
-    if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT))  dir.x -= 1;
-    if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) dir.x += 1;
-    if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP))    dir.y -= 1;
-    if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN))  dir.y += 1;
+    if (IsKeyDown(KEY_LEFT))  dir.x -= 1;
+    if (IsKeyDown(KEY_RIGHT)) dir.x += 1;
+    if (IsKeyDown(KEY_UP))    dir.y -= 1;
+    if (IsKeyDown(KEY_DOWN))  dir.y += 1;
     gameCamera.target = Vector2Add(gameCamera.target, Vector2Scale(dir, CAM_PAN_SPEED*dt/gameCamera.zoom));
 
     // Middle-mouse drag: the world follows the mouse.

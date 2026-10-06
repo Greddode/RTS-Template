@@ -22,12 +22,13 @@ make clean   # delete build folders
 
 | Input | Action |
 |---|---|
-| WASD / arrows / middle-drag | Pan camera |
+| Arrows / middle-drag | Pan camera |
 | Mouse wheel | Zoom |
 | Left click / drag | Select unit / box select |
 | Shift + select | Add to selection |
 | Right click | Move selected units |
 | Right click on enemy | Attack it |
+| A, then right click | Attack-move: walk there, fighting any enemies met on the way (left click cancels) |
 | F1 | Debug: spawn a wave of 20 enemies |
 
 ## Code layout (`src/`)

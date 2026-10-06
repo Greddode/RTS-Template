@@ -110,7 +110,7 @@ static void UpdateDrawFrame(void)
             MapDraw(view);
             UnitsDraw(view, alpha);
             CombatProjectilesDraw(view, alpha);
-            InputDrawSelectionBox();
+            InputDraw();
         EndMode2D();
         DrawOverlay();
     EndDrawing();
@@ -130,6 +130,6 @@ static void DrawOverlay(void)
     DrawText(TextFormat("Sim tick: %.2f ms", lastTickMs), 10, 52, 16, RAYWHITE);
     DrawText(TextFormat("Paths queued: %d   Path: %.2f ms", PathQueueLength(), PathLastFrameMs()), 10, 72, 16, RAYWHITE);
 
-    const char *help = "WASD/Arrows/MMB: pan   Wheel: zoom   LMB: select   Shift: add   RMB: move / attack   F1: enemy wave";
+    const char *help = "Arrows/MMB: pan   Wheel: zoom   LMB: select   Shift: add   RMB: move / attack   A+RMB: attack-move   F1: enemy wave";
     DrawText(help, 10, GetScreenHeight() - 24, 16, RAYWHITE);
 }

@@ -28,6 +28,8 @@ typedef struct Unit {
     float   bestDist;    // closest it has got to its current waypoint
     int     stuckTicks;  // ticks since bestDist last improved
     int     repathsLeft; // new paths it may still ask for before giving up on this order
+    bool    attackMove;      // attack-move order: fight enemies met on the way...
+    Vector2 attackMoveDest;  // ...then carry on to this spot
 
     // Combat (combat.c)
     bool         attacking;
@@ -52,6 +54,7 @@ void UnitsDraw(Rectangle view, float alpha); // alpha: 0..1, how far we are betw
 // Orders (from the player or the AI)
 void UnitsOrderMove(const int *ids, int count, Vector2 dest);
 void UnitsOrderAttack(const int *ids, int count, int target);
+void UnitsOrderAttackMove(const int *ids, int count, Vector2 dest);   // move, but fight anything met on the way
 int  UnitsOpenSpots(Vector2 centre, int count, Vector2 *out);  // free spots around centre, closest first
 
 // Movement helpers used by combat.c
