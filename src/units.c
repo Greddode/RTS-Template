@@ -4,26 +4,34 @@
 // despawning just clears the flag. No malloc/free while the game runs, so no
 // fragmentation or hitches, and memory use is known up front.
 //
-// Movement: each tick a moving unit steps toward its target, gets pushed away
-// from units it overlaps (separation), and refuses to step onto unwalkable
-// tiles. Units walk in straight lines - pathfinding will plug in here later.
-// A unit that stops getting closer to its target (blocked by water, a crowd,
-// ...) gives up after UNIT_GIVE_UP_TICKS instead of pushing forever.
+// Movement: a move order asks path.c for a route. Each tick a moving unit steps
+// toward its current waypoint (or waits if its path isn't ready yet), gets
+// pushed away from units it overlaps (separation), and refuses to step into
+// water/rock.
+//
+// Repathing: if a unit stops getting closer to its waypoint for
+// UNIT_REPATH_TICKS (blocked by a crowd, pushed off its route, ...), it asks
+// for a fresh path from where it stands. After UNIT_MAX_REPATHS tries it gives up.
 
 #include "units.h"
 #include "config.h"
 #include "grid.h"
 #include "map.h"
+#include "path.h"
 #include "raymath.h"
 #include <float.h>
 #include <math.h>
+#include <stdlib.h>
 
 #define UNIT_COLOR          (Color){ 220, 200, 60, 255 }
 #define UNIT_SELECTED_COLOR (Color){ 60, 255, 90, 255 }
 #define UNIT_DRAW_SEGMENTS  12   // circle smoothness; units are small, keep it cheap
 #define MAX_NEIGHBOURS      32   // neighbours checked for separation
-#define UNIT_GIVE_UP_TICKS  (TICK_RATE*3/2)   // 1.5 s without progress = give up
-#define DEST_SEARCH_TILES   8    // how far to look for open ground around a blocked destination
+#define UNIT_REPATH_TICKS   TICK_RATE           // 1 s without progress = ask for a new path
+#define UNIT_MAX_REPATHS    3
+#define UNIT_ARRIVE_DIST    (TILE_SIZE*0.5f)    // close enough to the target to count as arrived
+#define FORMATION_SPACING   (UNIT_RADIUS*2.5f)  // gap between formation spots
+#define FORMATION_MAX_RINGS 64                  // how far out to look for free spots
 
 Unit units[MAX_UNITS];
 static int activeCount = 0;
@@ -50,6 +58,7 @@ void UnitDespawn(int id)
 {
     if (!units[id].active) return;
     units[id].active = false;
+    PathCancel(id);
     activeCount--;
 }
 
@@ -89,20 +98,70 @@ static Vector2 SeparationPush(int self)
     return push;
 }
 
-// True if a unit's body at `pos` is clear of water/rock. Checks the four edge
-// points of the circle: cheap, and close enough for small round units.
-static bool UnitFits(Vector2 pos, float r)
-{
-    return MapIsWalkable((Vector2){ pos.x + r, pos.y }) && MapIsWalkable((Vector2){ pos.x - r, pos.y }) &&
-           MapIsWalkable((Vector2){ pos.x, pos.y + r }) && MapIsWalkable((Vector2){ pos.x, pos.y - r });
-}
-
 // Apply a step, but never into water/rock. X and Y are tried separately so
 // units slide along walls instead of sticking to them.
 static void MoveWithTerrain(Unit *u, Vector2 step)
 {
-    if (UnitFits((Vector2){ u->pos.x + step.x, u->pos.y }, u->radius)) u->pos.x += step.x;
-    if (UnitFits((Vector2){ u->pos.x, u->pos.y + step.y }, u->radius)) u->pos.y += step.y;
+    if (MapCircleWalkable((Vector2){ u->pos.x + step.x, u->pos.y }, u->radius)) u->pos.x += step.x;
+    if (MapCircleWalkable((Vector2){ u->pos.x, u->pos.y + step.y }, u->radius)) u->pos.y += step.y;
+}
+
+static void RequestPath(int id)
+{
+    Unit *u = &units[id];
+    PathRequest(id, u->pos, u->target);
+    u->bestDist = FLT_MAX;
+    u->stuckTicks = 0;
+}
+
+static void StopMoving(int id)
+{
+    units[id].moving = false;
+    PathCancel(id);
+}
+
+// Ask for a new path, or give up if this order has used all its retries.
+static void Repath(int id)
+{
+    if (units[id].repathsLeft-- > 0) RequestPath(id);
+    else StopMoving(id);
+}
+
+// This tick's step along the unit's path (zero while waiting for the path).
+static Vector2 FollowPath(int id)
+{
+    Unit *u = &units[id];
+    Vector2 none = { 0 };
+
+    PathStatus status = PathGetStatus(id);
+    if (status == PATH_PENDING) return none;
+    if (status != PATH_READY) { StopMoving(id); return none; }
+
+    Vector2 waypoint;
+    if (!PathCurrentWaypoint(id, &waypoint))
+    {
+        // End of the path. If it stopped short of the target (partial path, or
+        // pushed off it on the way), try again from here.
+        if (Vector2Distance(u->pos, u->target) > UNIT_ARRIVE_DIST) Repath(id);
+        else StopMoving(id);
+        return none;
+    }
+
+    Vector2 toWaypoint = Vector2Subtract(waypoint, u->pos);
+    float dist = Vector2Length(toWaypoint);
+    float maxStep = u->speed*TICK_DT;
+    if (dist <= maxStep)
+    {
+        PathAdvance(id);
+        u->bestDist = FLT_MAX;
+        u->stuckTicks = 0;
+        return toWaypoint;
+    }
+
+    if (dist < u->bestDist - 0.5f) { u->bestDist = dist; u->stuckTicks = 0; }
+    else if (++u->stuckTicks > UNIT_REPATH_TICKS) { Repath(id); return none; }
+
+    return Vector2Scale(toWaypoint, maxStep/dist);
 }
 
 void UnitsTick(void)
@@ -114,19 +173,7 @@ void UnitsTick(void)
 
         u->prevPos = u->pos;
 
-        Vector2 step = { 0 };
-        if (u->moving)
-        {
-            Vector2 toTarget = Vector2Subtract(u->target, u->pos);
-            float dist = Vector2Length(toTarget);
-            float maxStep = u->speed*TICK_DT;
-            if (dist <= maxStep) { step = toTarget; u->moving = false; }
-            else step = Vector2Scale(toTarget, maxStep/dist);
-
-            if (dist < u->bestDist - 0.5f) { u->bestDist = dist; u->stuckTicks = 0; }
-            else if (++u->stuckTicks > UNIT_GIVE_UP_TICKS) u->moving = false;
-        }
-
+        Vector2 step = u->moving ? FollowPath(i) : (Vector2){ 0 };
         step = Vector2Add(step, SeparationPush(i));
         MoveWithTerrain(u, step);
     }
@@ -152,28 +199,86 @@ void UnitsDraw(Rectangle view, float alpha)
     }
 }
 
-// Each unit gets its own spot in a square formation around `dest`, so a group
-// doesn't fight over a single point when it arrives. Spots that are off the
-// map or in water/rock are moved to the nearest open tile.
+// Fill `spots` with up to `count` open positions around `dest`, closest first:
+// walk square rings outward from the centre and keep every spot a unit fits
+// on. Every unit gets its own spot, so a group never fights over one point.
+// Returns how many spots were found.
+static int FormationSpots(Vector2 dest, int count, Vector2 *spots)
+{
+    int found = 0;
+    for (int ring = 0; ring <= FORMATION_MAX_RINGS && found < count; ring++)
+    {
+        for (int gy = -ring; gy <= ring && found < count; gy++)
+        {
+            for (int gx = -ring; gx <= ring && found < count; gx++)
+            {
+                if (abs(gx) != ring && abs(gy) != ring) continue;   // only this ring's edge
+                Vector2 p = { dest.x + gx*FORMATION_SPACING, dest.y + gy*FORMATION_SPACING };
+                if (MapCircleWalkable(p, UNIT_RADIUS)) spots[found++] = p;
+            }
+        }
+    }
+    return found;
+}
+
+// Sorting helper: qsort an array of indices by sortKey[index].
+static float sortKey[MAX_UNITS];
+static int CompareKeys(const void *a, const void *b)
+{
+    float ka = sortKey[*(const int *)a], kb = sortKey[*(const int *)b];
+    return (ka < kb) - (ka > kb);   // largest key first
+}
+
+static void SortByAxis(int *order, int n, const Vector2 *points, Vector2 axis)
+{
+    for (int k = 0; k < n; k++) sortKey[order[k]] = Vector2DotProduct(points[order[k]], axis);
+    qsort(order, n, sizeof(int), CompareKeys);
+}
+
+// Order `points` front-to-back along `forward`, in rows of `rowSize`, each
+// row sorted left-to-right. Sorting units and spots the same way and pairing
+// them up keeps the group's shape: nobody walks through the crowd.
+static void FormationOrder(int *order, int n, const Vector2 *points, Vector2 forward, int rowSize)
+{
+    Vector2 side = { -forward.y, forward.x };
+    for (int k = 0; k < n; k++) order[k] = k;
+    SortByAxis(order, n, points, forward);
+    for (int row = 0; row < n; row += rowSize)
+    {
+        SortByAxis(order + row, (n - row < rowSize) ? n - row : rowSize, points, side);
+    }
+}
+
 void UnitsOrderMove(const int *ids, int count, Vector2 dest)
 {
+    static Vector2 spots[MAX_UNITS], unitPos[MAX_UNITS];
+    static int spotOrder[MAX_UNITS], unitOrder[MAX_UNITS];
     if (count <= 0) return;
 
-    int side = (int)ceilf(sqrtf((float)count));
-    float spacing = UNIT_RADIUS*2.5f;
-    float half = (side - 1)*spacing*0.5f;
+    int found = FormationSpots(dest, count, spots);
+
+    // Move direction: from the group's centre toward the destination.
+    Vector2 centre = { 0 };
+    for (int k = 0; k < count; k++)
+    {
+        unitPos[k] = units[ids[k]].pos;
+        centre = Vector2Add(centre, unitPos[k]);
+    }
+    centre = Vector2Scale(centre, 1.0f/count);
+    Vector2 forward = Vector2Normalize(Vector2Subtract(dest, centre));
+    if (forward.x == 0.0f && forward.y == 0.0f) forward = (Vector2){ 1.0f, 0.0f };
+
+    int rowSize = (int)ceilf(sqrtf((float)count));
+    FormationOrder(unitOrder, count, unitPos, forward, rowSize);
+    FormationOrder(spotOrder, found, spots, forward, rowSize);
 
     for (int k = 0; k < count; k++)
     {
-        Unit *u = &units[ids[k]];
-        Vector2 spot = { dest.x - half + (k % side)*spacing, dest.y - half + (k / side)*spacing };
-        spot.x = Clamp(spot.x, 0.0f, MAP_PIXEL_W - 1.0f);
-        spot.y = Clamp(spot.y, 0.0f, MAP_PIXEL_H - 1.0f);
-        if (!UnitFits(spot, u->radius)) MapNearestWalkable(spot, DEST_SEARCH_TILES, &spot);
-
-        u->target = spot;
+        int id = ids[unitOrder[k]];
+        Unit *u = &units[id];
+        u->target = (k < found) ? spots[spotOrder[k]] : dest;   // more units than open spots: rare
         u->moving = true;
-        u->bestDist = FLT_MAX;
-        u->stuckTicks = 0;
+        u->repathsLeft = UNIT_MAX_REPATHS;
+        RequestPath(id);
     }
 }

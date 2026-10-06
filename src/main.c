@@ -12,6 +12,7 @@
 #include "grid.h"
 #include "input.h"
 #include "map.h"
+#include "path.h"
 #include "units.h"
 
 #if defined(__EMSCRIPTEN__)
@@ -77,6 +78,7 @@ static void UpdateDrawFrame(void)
     // Per-frame: things that should feel instant.
     CamUpdate(frameTime);
     InputUpdate();
+    PathUpdate();   // budgeted: leftover requests wait for the next frame
 
     // Fixed ticks: run as many as the elapsed time covers (0, 1 or several).
     tickAccumulator += frameTime;
@@ -103,16 +105,17 @@ static void UpdateDrawFrame(void)
 
     if (GetTime() >= nextPerfLog)
     {
-        TraceLog(LOG_INFO, "PERF: %d FPS | %d units | tick %.2f ms", GetFPS(), UnitsActiveCount(), lastTickMs);
+        TraceLog(LOG_INFO, "PERF: %d FPS | %d units | tick %.2f ms | paths queued %d", GetFPS(), UnitsActiveCount(), lastTickMs, PathQueueLength());
         nextPerfLog += PERF_LOG_EVERY;
     }
 }
 
 static void DrawOverlay(void)
 {
-    DrawRectangle(0, 0, 330, 56, Fade(BLACK, 0.6f));
+    DrawRectangle(0, 0, 330, 76, Fade(BLACK, 0.6f));
     DrawFPS(10, 8);
     DrawText(TextFormat("Units: %d   Tick: %.2f ms", UnitsActiveCount(), lastTickMs), 10, 32, 16, RAYWHITE);
+    DrawText(TextFormat("Paths queued: %d   Path: %.2f ms", PathQueueLength(), PathLastFrameMs()), 10, 52, 16, RAYWHITE);
 
     const char *help = "WASD/Arrows/MMB: pan   Wheel: zoom   LMB: select   Shift: add   RMB: move";
     DrawText(help, 10, GetScreenHeight() - 24, 16, RAYWHITE);

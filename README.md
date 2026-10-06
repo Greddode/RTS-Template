@@ -38,4 +38,5 @@ make clean   # delete build folders
 | `camera.c` | Pan / zoom, visible-area queries |
 | `units.c` | Unit pool, movement, separation, drawing |
 | `grid.c` | Spatial grid for nearby-unit queries |
+| `path.c` | A* pathfinding: request queue, per-frame time budget, path smoothing |
 | `input.c` | Selection and move orders |
