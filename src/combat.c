@@ -9,15 +9,19 @@
 // Only when something is in the way does it ask path.c for a route, which
 // goes through the normal budgeted queue.
 //
-// Targets are remembered as (index, serial). When a unit dies its pool slot
-// can be reused by a new unit; the serial tells them apart, so nobody ends up
-// attacking the newcomer by mistake.
+// Targets are remembered as (index, serial, isBuilding). When a unit dies its
+// pool slot can be reused by a new unit; the serial tells them apart, so
+// nobody ends up attacking the newcomer by mistake. The small Target*()
+// helpers below hide whether the target is a unit or a building. Range to a
+// building is measured to its nearest wall, not its centre.
 //
 // Hold position: a holding unit only picks targets already within its attack
 // range, and drops a target that leaves range instead of chasing it.
 //
 // Auto-targeting: idle and attack-moving units look for the nearest enemy within
-// COMBAT_AGGRO_RADIUS using the spatial grid, and attack it.
+// COMBAT_AGGRO_RADIUS using the spatial grid, and attack it. Enemy units come
+// first; enemy buildings only when no unit is in reach. Workers don't
+// auto-attack.
 //
 // Overkill: each unit tracks `incomingDamage`, the damage in projectiles
 // already flying at it. Once that's enough to kill it, the unit is "doomed":
@@ -26,6 +30,7 @@
 // becomes doomed, the attacker picks the next one on the same tick.
 
 #include "combat.h"
+#include "buildings.h"
 #include "config.h"
 #include "grid.h"
 #include "map.h"
@@ -42,6 +47,7 @@ typedef struct Projectile {
     Vector2      pos, prevPos;
     int          target;
     unsigned int targetSerial;
+    bool         targetIsBuilding;
     float        damage;
 } Projectile;
 
@@ -55,20 +61,58 @@ static float SearchRadius(const Unit *u)
     return u->holdPosition ? UNIT_STATS[u->type].range : COMBAT_AGGRO_RADIUS;
 }
 
-static bool IsDoomed(int id)
+// --- Target helpers: a target is a unit or a building -------------------------
+static bool TargetAlive(bool isBuilding, int id, unsigned int serial)
 {
-    return units[id].hp <= units[id].incomingDamage;
+    return isBuilding ? BuildingIsAlive(id, serial) : UnitIsAlive(id, serial);
 }
 
-static void DealDamage(int target, float damage)
+static float *TargetIncoming(bool isBuilding, int id)
 {
-    units[target].hp -= damage;
-    if (units[target].hp <= 0.0f) UnitDespawn(target);   // frees the slot, clears selection
+    return isBuilding ? &buildings[id].incomingDamage : &units[id].incomingDamage;
+}
+
+static bool TargetDoomed(bool isBuilding, int id)
+{
+    float hp = isBuilding ? buildings[id].hp : units[id].hp;
+    return hp <= *TargetIncoming(isBuilding, id);
+}
+
+// Distance from `from` to the target: its centre for units, its nearest wall for buildings.
+static float TargetDistance(bool isBuilding, int id, Vector2 from)
+{
+    return isBuilding ? BuildingDistance(id, from) : Vector2Distance(from, units[id].pos);
+}
+
+static void DealDamage(bool isBuilding, int target, float damage)
+{
+    if (isBuilding)
+    {
+        buildings[target].hp -= damage;
+        if (buildings[target].hp <= 0.0f) BuildingDestroy(target);   // unblocks its tiles
+    }
+    else
+    {
+        units[target].hp -= damage;
+        if (units[target].hp <= 0.0f) UnitDespawn(target);   // frees the slot, clears selection
+    }
+}
+
+// Attack the nearest enemy worth attacking within `radius`: units first, then
+// buildings. Returns false if there's nothing to attack.
+static bool AttackNearest(int id, float radius)
+{
+    Unit *u = &units[id];
+    int enemy = GridFindNearestEnemy(u->pos, radius, u->team);
+    if (enemy != -1) { UnitsOrderAttack(&id, 1, enemy); return true; }
+    int building = BuildingsFindNearest(u->pos, radius, u->team, true);
+    if (building != -1) { UnitsOrderAttackBuilding(&id, 1, building); return true; }
+    return false;
 }
 
 // Fire at a target. Uses a free projectile slot; if the pool is full (very
 // unlikely), the damage lands immediately instead of being lost.
-static void FireProjectile(Vector2 from, int target, float damage)
+static void FireProjectile(Vector2 from, bool isBuilding, int target, unsigned int serial, float damage)
 {
     for (int i = 0; i < MAX_PROJECTILES; i++)
     {
@@ -77,14 +121,15 @@ static void FireProjectile(Vector2 from, int target, float damage)
             .active = true,
             .pos = from, .prevPos = from,
             .target = target,
-            .targetSerial = units[target].serial,
+            .targetSerial = serial,
+            .targetIsBuilding = isBuilding,
             .damage = damage,
         };
-        units[target].incomingDamage += damage;
+        *TargetIncoming(isBuilding, target) += damage;
         projectileCount++;
         return;
     }
-    DealDamage(target, damage);
+    DealDamage(isBuilding, target, damage);
 }
 
 Vector2 CombatUnitTick(int id)
@@ -92,14 +137,14 @@ Vector2 CombatUnitTick(int id)
     Unit *u = &units[id];
     Vector2 none = { 0 };
 
-    bool alive = UnitIsAlive(u->attackTarget, u->attackTargetSerial);
-    if (!alive || IsDoomed(u->attackTarget))
+    bool alive = TargetAlive(u->attackTargetIsBuilding, u->attackTarget, u->attackTargetSerial);
+    if (!alive || TargetDoomed(u->attackTargetIsBuilding, u->attackTarget))
     {
         // Switch right away (same tick) to the nearest enemy worth attacking.
-        int next = GridFindNearestEnemy(u->pos, SearchRadius(u), u->team);
-        if (next != -1) UnitsOrderAttack(&id, 1, next);
-        else if (!alive)
+        if (!AttackNearest(id, SearchRadius(u)))
         {
+            if (alive) return none;   // only a doomed target left: hold fire, it's dying anyway
+
             // Nothing nearby: an attack-moving unit carries on to its
             // destination; anyone else goes idle and keeps scanning.
             u->attacking = false;
@@ -107,20 +152,20 @@ Vector2 CombatUnitTick(int id)
             else UnitStop(id);
             return none;
         }
-        else return none;           // only a doomed target left: hold fire, it's dying anyway
     }
 
-    const Unit *t = &units[u->attackTarget];
+    bool isBuilding = u->attackTargetIsBuilding;
+    int target = u->attackTarget;
     const UnitStats *stats = &UNIT_STATS[u->type];
 
     // In range: stand still and attack whenever the cooldown allows.
-    if (Vector2Distance(u->pos, t->pos) <= stats->range)
+    if (TargetDistance(isBuilding, target, u->pos) <= stats->range)
     {
         if (u->moving) UnitStop(id);
         if (u->cooldownTicks == 0)
         {
-            if (u->type == UNIT_RANGED) FireProjectile(u->pos, u->attackTarget, stats->damage);
-            else DealDamage(u->attackTarget, stats->damage);
+            if (u->type == UNIT_RANGED) FireProjectile(u->pos, isBuilding, target, u->attackTargetSerial, stats->damage);
+            else DealDamage(isBuilding, target, stats->damage);
             u->cooldownTicks = (int)(stats->cooldown*TICK_RATE);
         }
         return none;
@@ -134,32 +179,34 @@ Vector2 CombatUnitTick(int id)
     }
 
     // Out of range: chase. Re-plan every CHASE_RETHINK_TICKS.
+    // Units are chased at their centre; buildings at an open spot by the wall.
+    Vector2 goal = isBuilding ? BuildingApproachPoint(target, u->pos, u->radius) : units[target].pos;
     if (--u->chaseTicks <= 0)
     {
         u->chaseTicks = CHASE_RETHINK_TICKS;
-        u->chaseDirect = MapLineClear(u->pos, t->pos, u->radius);
+        u->chaseDirect = MapLineClear(u->pos, goal, u->radius);
         if (u->chaseDirect)
         {
             if (u->moving) UnitStop(id);
         }
-        else if (!u->moving || Vector2Distance(u->target, t->pos) > TILE_SIZE)
+        else if (!u->moving || Vector2Distance(u->target, goal) > TILE_SIZE)
         {
-            UnitMoveTo(id, t->pos);   // path only when needed, and only if the target moved
+            UnitMoveTo(id, goal);   // path only when needed, and only if the target moved
         }
     }
 
-    if (u->chaseDirect) return UnitStepToward(id, t->pos);
+    if (u->chaseDirect) return UnitStepToward(id, goal);
     return u->moving ? UnitFollowPath(id) : none;
 }
 
 void CombatAcquireTick(int id)
 {
     Unit *u = &units[id];
+    if (u->type == UNIT_WORKER) return;   // workers only fight when told to
     if (--u->acquireTicks > 0) return;
     u->acquireTicks = COMBAT_ACQUIRE_TICKS;
 
-    int enemy = GridFindNearestEnemy(u->pos, SearchRadius(u), u->team);
-    if (enemy != -1) UnitsOrderAttack(&id, 1, enemy);
+    AttackNearest(id, SearchRadius(u));
 }
 
 // Projectiles home in on their target. If it dies first, they vanish.
@@ -173,21 +220,23 @@ void CombatProjectilesTick(void)
         p->prevPos = p->pos;
 
         bool hit = false;
-        bool targetAlive = UnitIsAlive(p->target, p->targetSerial);
+        bool targetAlive = TargetAlive(p->targetIsBuilding, p->target, p->targetSerial);
         if (targetAlive)
         {
-            Vector2 to = Vector2Subtract(units[p->target].pos, p->pos);
-            float dist = Vector2Length(to);
+            float dist = TargetDistance(p->targetIsBuilding, p->target, p->pos);
             if (dist <= maxStep) hit = true;
             else
             {
-                p->pos = Vector2Add(p->pos, Vector2Scale(to, maxStep/dist));
+                // Fly at the unit, or at the building's centre (it hits the wall first).
+                Vector2 aim = p->targetIsBuilding ? BuildingCentre(p->target) : units[p->target].pos;
+                Vector2 to = Vector2Subtract(aim, p->pos);
+                p->pos = Vector2Add(p->pos, Vector2Scale(to, maxStep/Vector2Length(to)));
                 continue;
             }
         }
 
-        if (targetAlive) units[p->target].incomingDamage -= p->damage;   // no longer in flight
-        if (hit) DealDamage(p->target, p->damage);
+        if (targetAlive) *TargetIncoming(p->targetIsBuilding, p->target) -= p->damage;   // no longer in flight
+        if (hit) DealDamage(p->targetIsBuilding, p->target, p->damage);
         p->active = false;
         projectileCount--;
     }

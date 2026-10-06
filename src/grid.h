@@ -9,7 +9,7 @@
 #define GRID_W ((MAP_PIXEL_W + GRID_CELL_SIZE - 1) / GRID_CELL_SIZE)
 #define GRID_H ((MAP_PIXEL_H + GRID_CELL_SIZE - 1) / GRID_CELL_SIZE)
 
-void GridRebuild(void);                              // call after units move
+void GridRebuild(void);                              // call after units move, and once before the first query
 int  GridQuery(Rectangle area, int *out, int maxOut); // unit ids whose centre is in `area`
 int  GridFindNearestEnemy(Vector2 pos, float maxDist, int myTeam);   // closest live, not-doomed enemy, or -1
 

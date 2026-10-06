@@ -1,6 +1,9 @@
 // map.c - Terrain storage, generation and drawing.
 //
 // The whole map is one flat array of tile types, indexed tiles[y * MAP_W + x].
+// A second array, `blocked`, marks tiles covered by buildings (buildings.c
+// sets it). A tile is walkable only if its terrain is open AND it's not blocked,
+// so pathfinding and movement avoid buildings without knowing about them.
 // MapGenerate() scatters seeded blobs of dirt/water/rock on grass. Swap it for
 // your own map loader when you have real maps.
 
@@ -10,6 +13,7 @@
 #define LINE_SAMPLE_STEP (TILE_SIZE / 4.0f)   // smaller = more exact line checks, but slower
 
 static unsigned char tiles[MAP_W * MAP_H];
+static bool          blocked[MAP_W * MAP_H];
 
 static const Color tileColors[TILE_COUNT] = {
     [TILE_GRASS] = {  70, 120,  60, 255 },
@@ -61,8 +65,24 @@ TileType MapGetTile(int tx, int ty)
 
 bool MapTileWalkable(int tx, int ty)
 {
-    TileType t = MapGetTile(tx, ty);
-    return t == TILE_GRASS || t == TILE_DIRT;
+    TileType t = MapGetTile(tx, ty);   // out of bounds = rock
+    return (t == TILE_GRASS || t == TILE_DIRT) && !blocked[ty*MAP_W + tx];
+}
+
+void MapSetBlocked(int tx, int ty, int w, int h, bool isBlocked)
+{
+    for (int y = ty; y < ty + h; y++)
+    {
+        for (int x = tx; x < tx + w; x++)
+        {
+            if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) blocked[y*MAP_W + x] = isBlocked;
+        }
+    }
+}
+
+void MapClearArea(Vector2 worldPos, int radiusTiles)
+{
+    PaintBlob((int)(worldPos.x/TILE_SIZE), (int)(worldPos.y/TILE_SIZE), radiusTiles, TILE_GRASS);
 }
 
 bool MapIsWalkable(Vector2 worldPos)

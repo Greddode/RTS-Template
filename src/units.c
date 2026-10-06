@@ -20,13 +20,18 @@
 // walking, the unit scans for enemies like an idle unit does. When a fight
 // ends with no enemies left nearby, combat.c sends it on to attackMoveDest.
 //
+// Workers ordered to mine are steered by economy.c (EconomyWorkerTick) and
+// don't auto-attack, so they stay on the job.
+//
 // Stop drops every order (the unit is idle, so it still auto-attacks).
 // Hold is stop plus `holdPosition`: combat.c then only lets it target enemies
 // already in range, and never chase.
 
 #include "units.h"
 #include "config.h"
+#include "buildings.h"
 #include "combat.h"
+#include "economy.h"
 #include "grid.h"
 #include "map.h"
 #include "path.h"
@@ -38,6 +43,7 @@
 #define PLAYER_COLOR        (Color){ 220, 200, 60, 255 }
 #define AI_COLOR            (Color){ 210, 60, 50, 255 }
 #define RANGED_DOT_COLOR    (Color){ 40, 30, 20, 255 }   // ranged units get a dark centre dot
+#define WORKER_MARK_COLOR   (Color){ 235, 235, 225, 255 } // workers get a light square
 #define UNIT_SELECTED_COLOR (Color){ 60, 255, 90, 255 }
 #define HEALTH_BAR_W        14.0f
 #define HEALTH_BAR_H        3.0f
@@ -230,8 +236,10 @@ void UnitsTick(void)
         if (u->cooldownTicks > 0) u->cooldownTicks--;
 
         Vector2 step = { 0 };
-        if (!u->attacking && (!u->moving || u->attackMove)) CombatAcquireTick(i);   // look for enemies
+        bool gathering = (u->gatherState != GATHER_NONE);
+        if (!u->attacking && !gathering && (!u->moving || u->attackMove)) CombatAcquireTick(i);   // look for enemies
         if (u->attacking) step = CombatUnitTick(i);   // may kill other units
+        else if (gathering) step = EconomyWorkerTick(i);
         else if (u->moving) step = UnitFollowPath(i);
 
         if (!u->active) continue;
@@ -259,6 +267,12 @@ void UnitsDraw(Rectangle view, float alpha)
         if (u->selected) DrawCircleSector(p, u->radius + 2.0f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, UNIT_SELECTED_COLOR);
         DrawCircleSector(p, u->radius, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, (u->team == PLAYER_TEAM) ? PLAYER_COLOR : AI_COLOR);
         if (u->type == UNIT_RANGED) DrawCircleSector(p, u->radius*0.4f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, RANGED_DOT_COLOR);
+        if (u->type == UNIT_WORKER)
+        {
+            float s = u->radius*0.9f;
+            DrawRectangleRec((Rectangle){ p.x - s*0.5f, p.y - s*0.5f, s, s }, WORKER_MARK_COLOR);
+            if (u->carryGold > 0) DrawCircleSector((Vector2){ p.x + u->radius*0.7f, p.y - u->radius*0.7f }, 2.5f, 0.0f, 360.0f, 6, GOLD);
+        }
 
         // Health bar, only once the unit has taken damage.
         float maxHp = UNIT_STATS[u->type].hp;
@@ -351,6 +365,7 @@ void UnitsOrderMove(const int *ids, int count, Vector2 dest)
         units[id].attacking = false;
         units[id].attackMove = false;
         units[id].holdPosition = false;
+        units[id].gatherState = GATHER_NONE;
         UnitMoveTo(id, (k < found) ? spots[spotOrder[k]] : dest);   // more units than open spots: rare
     }
 }
@@ -367,18 +382,35 @@ void UnitsOrderAttackMove(const int *ids, int count, Vector2 dest)
     }
 }
 
+// Shared by unit and building attack orders.
+static void SetAttackTarget(int id, int target, unsigned int serial, bool isBuilding)
+{
+    Unit *u = &units[id];
+    StopMoving(id);
+    u->gatherState = GATHER_NONE;
+    u->attacking = true;
+    u->attackTargetIsBuilding = isBuilding;
+    u->attackTarget = target;
+    u->attackTargetSerial = serial;
+    u->chaseDirect = false;
+    u->chaseTicks = 0;   // decide how to reach it on its very next tick
+}
+
 void UnitsOrderAttack(const int *ids, int count, int target)
 {
     for (int k = 0; k < count; k++)
     {
-        Unit *u = &units[ids[k]];
-        if (ids[k] == target || u->team == units[target].team) continue;
-        StopMoving(ids[k]);
-        u->attacking = true;
-        u->attackTarget = target;
-        u->attackTargetSerial = units[target].serial;
-        u->chaseDirect = false;
-        u->chaseTicks = 0;   // decide how to reach it on its very next tick
+        if (ids[k] == target || units[ids[k]].team == units[target].team) continue;
+        SetAttackTarget(ids[k], target, units[target].serial, false);
+    }
+}
+
+void UnitsOrderAttackBuilding(const int *ids, int count, int building)
+{
+    for (int k = 0; k < count; k++)
+    {
+        if (units[ids[k]].team == buildings[building].team) continue;
+        SetAttackTarget(ids[k], building, buildings[building].serial, true);
     }
 }
 
@@ -391,6 +423,7 @@ void UnitsOrderStop(const int *ids, int count)
         u->attacking = false;
         u->attackMove = false;
         u->holdPosition = false;
+        u->gatherState = GATHER_NONE;
     }
 }
 

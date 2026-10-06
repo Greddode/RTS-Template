@@ -9,6 +9,8 @@
 #define MAX_UNITS   2048
 #define UNIT_RADIUS 6.0f    // world pixels
 
+typedef enum { GATHER_NONE, GATHER_TO_NODE, GATHER_MINING, GATHER_TO_BASE } GatherState;
+
 typedef struct Unit {
     bool         active;      // false = free slot in the pool
     unsigned int serial;      // unique per spawn: tells a reused slot apart from the unit that died in it
@@ -34,12 +36,23 @@ typedef struct Unit {
 
     // Combat (combat.c)
     bool         attacking;
-    int          attackTarget;        // unit index...
-    unsigned int attackTargetSerial;  // ...and its serial, to detect that it died
+    bool         attackTargetIsBuilding;  // target is in buildings[], not units[]
+    int          attackTarget;            // slot index...
+    unsigned int attackTargetSerial;      // ...and its serial, to detect that it died
     bool         chaseDirect;         // straight line to target is clear: walk at it, no path needed
     int          cooldownTicks;       // ticks until it can attack again
     int          acquireTicks;        // idle: ticks until it next looks for enemies
     int          chaseTicks;          // attacking: ticks until it re-plans its chase
+
+    // Gathering (economy.c) - workers only
+    GatherState  gatherState;
+    int          gatherNode;          // gold node slot...
+    unsigned int gatherNodeSerial;    // ...and serial
+    int          dropBase;            // base being walked to (slot + serial)
+    unsigned int dropBaseSerial;
+    int          gatherTicks;         // mining countdown
+    int          gatherRetries;       // path attempts left before giving up
+    int          carryGold;
 } Unit;
 
 extern Unit units[MAX_UNITS];
@@ -55,6 +68,7 @@ void UnitsDraw(Rectangle view, float alpha); // alpha: 0..1, how far we are betw
 // Orders (from the player or the AI)
 void UnitsOrderMove(const int *ids, int count, Vector2 dest);
 void UnitsOrderAttack(const int *ids, int count, int target);
+void UnitsOrderAttackBuilding(const int *ids, int count, int building);
 void UnitsOrderAttackMove(const int *ids, int count, Vector2 dest);   // move, but fight anything met on the way
 void UnitsOrderStop(const int *ids, int count);   // drop all orders and go idle
 void UnitsOrderHold(const int *ids, int count);   // stop, then stay put: attack only what's in range
