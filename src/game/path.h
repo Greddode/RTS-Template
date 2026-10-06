@@ -23,4 +23,10 @@ int        PathQueueLength(void);
 double     PathLastFrameMs(void);                            // time PathUpdate() used last frame
 void       PathReset(void);                                  // drop every request and path (new game)
 
+// Connected areas: tiles you can walk between share a region number (0 = not
+// walkable). Same-region means pathfinding can get there. Rebuild after the
+// map or buildings change; it's a flood fill over every tile (fast).
+void       PathComputeRegions(void);
+int        PathRegion(Vector2 worldPos);
+
 #endif

@@ -1,76 +1,146 @@
-// ai.c - A very simple computer opponent.
+// ai.c - A simple computer opponent.
 //
-// Every AI_THINK_TICKS (2 s of sim time) the AI looks at its idle units:
-//   - idle workers go mine the nearest gold node
-//   - idle combat units attack the nearest player unit; if the player has no
-//     units left, the nearest player building; failing that, they march on
-//     the player's base position
-// Units that are already busy are left alone; once they arrive, combat.c's
-// auto-targeting takes over.
+// Every AI_THINK_TICKS (2 s) the AI:
+//   1. Barracks: once it has AI_BARRACKS_WORKERS workers and the gold, one
+//      worker builds a Barracks near its base (another worker takes over if
+//      the builder dies; rebuilt if destroyed).
+//   2. Workers: each finished drop-off base wants AI_WORKERS_PER_NODE workers
+//      per reachable gold node near it (at most AI_MAX_WORKERS_PER_BASE). The
+//      base that's furthest below its target trains one, if the AI can pay.
+//      Once every base is saturated it stops, so gold goes to the army.
+//      (While it's still waiting for a Barracks, the Barracks comes first.)
+//   3. Expansion (every AI_EXPAND_CHECK_TICKS): look for a gold node that is
+//      far from its drop-offs, still rich, reachable and not next to an enemy
+//      building. With the base's cost plus a reserve (or just the cost when
+//      its own nodes run low), one worker builds a new Base near it. Once its
+//      workers are saturated (or its gold runs low) it also saves up for it,
+//      pausing combat training (AI_SAVE_FOR_EXPANSION). One expansion
+//      at a time; if the builder dies, the site is cancelled (refunded) and
+//      that node isn't tried again. The new base's rally point faces its node.
+//   4. Idle units: workers go to the gold node near their base with the
+//      fewest workers on it; combat units attack the nearest player unit (or
+//      building, or march on the player's base).
+// Separately, every AI_TRAIN_TICKS the Barracks queues a combat unit.
 //
-// Barracks: once the AI has the gold and at least AI_BARRACKS_WORKERS workers,
-// one worker builds a Barracks near the base (first open spot found by
-// BuildingsFindSpot). If the builder dies, another worker takes over; if the
-// Barracks is destroyed, it's rebuilt the same way.
-//
-// Every AI_TRAIN_TICKS the finished Barracks queues a combat unit (melee and
-// ranged in turn), paying gold like the player does. No gold, no unit.
-//
-// Finding "the nearest player unit" uses the spatial grid. Units standing in
-// the same grid cell share one search per think, so a wave of 20 units costs
-// only a few searches.
+// "Reachable" uses PathRegion(): a flood fill of the walkable tiles, redone
+// every think, so it answers "could pathfinding get there?" instantly.
+// All numbers are in config.h. No pools of its own: it keeps a few slot +
+// serial pairs (Barracks, expansion site, builder, node) and fixed arrays.
 
 #include "ai.h"
 #include "config.h"
 #include "buildings.h"
 #include "economy.h"
 #include "grid.h"
+#include "path.h"
 #include "units.h"
+#include "raymath.h"
+#include <stdarg.h>
+#include <stdio.h>
 
-static Vector2 playerBase, aiSpawn;
-static int aiBase;                 // our base building: slot...
-static unsigned int aiBaseSerial;  // ...and serial
-static int thinkCountdown = AI_THINK_TICKS;
-static int trainCountdown = AI_TRAIN_TICKS;
-static int trainCount = 0;         // alternates melee / ranged
-static int aiBarracks = -1;        // our Barracks: slot...
-static unsigned int aiBarracksSerial;   // ...and serial
+static Vector2      playerBase, aiSpawn;
+static int          aiBase;                 // the starting base: slot...
+static unsigned int aiBaseSerial;           // ...and serial
+static int          thinkCountdown, trainCountdown, expandCountdown;
+static int          trainCount;             // alternates melee / ranged
+static int          aiBarracks = -1;
+static unsigned int aiBarracksSerial;
+
+// Expansion in progress (one at a time).
+static bool         expanding = false, savingForExpansion = false;
+static int          expSite, expBuilder, expNode;
+static unsigned int expSiteSerial, expBuilderSerial, expNodeSerial;
+static unsigned int failedNodes[AI_MAX_FAILED_NODES];   // serials of nodes it gave up on
+static int          failedCount = 0;
+
+// Filled every think.
+static int  homeRegion;                     // the walkable area our base stands in
+static int  gatherers[MAX_GOLD_NODES];      // our workers mining each node
+static int  workerCount, workerTarget, baseCount;
+static char barracksNote[64], workerNote[64], expandNote[96];
 
 // Per-think cache: grid cell -> nearest player unit found from it.
 static int          cellTarget[GRID_W*GRID_H];
 static unsigned int cellStamp[GRID_W*GRID_H];
 static unsigned int thinkStamp = 0;
 
-void AiInit(Vector2 base, Vector2 spawn, int baseBuilding)
+static void Note(char *note, int size, const char *fmt, ...)
 {
-    playerBase = base;
-    aiSpawn = spawn;
-    aiBase = baseBuilding;
-    aiBaseSerial = (baseBuilding >= 0) ? buildings[baseBuilding].serial : 0;
-    thinkCountdown = AI_THINK_TICKS;
-    trainCountdown = AI_TRAIN_TICKS;
-    trainCount = 0;
-    aiBarracks = -1;
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(note, size, fmt, args);
+    va_end(args);
 }
 
-static void TrainTick(void)
+// --- What do we own? ----------------------------------------------------------------
+
+static bool IsOurDropOff(int b)
 {
-    if (--trainCountdown > 0) return;
-    trainCountdown = AI_TRAIN_TICKS;
-    if (!BuildingIsAlive(aiBarracks, aiBarracksSerial)) return;
-    const Building *b = &buildings[aiBarracks];
-    if (b->constructing || b->queueCount >= 2) return;
-    if (BuildingQueueTrain(aiBarracks, (trainCount % 2) ? UNIT_RANGED : UNIT_MELEE)) trainCount++;
+    const Building *bd = &buildings[b];
+    return bd->active && bd->team == AI_TEAM && !bd->constructing && BUILDING_STATS[bd->type].dropOff;
 }
 
-// Called every think. Builds (or keeps building) one Barracks.
+// The building we organise around: the starting base, or any drop-off left.
+static int AnchorBase(void)
+{
+    if (BuildingIsAlive(aiBase, aiBaseSerial)) return aiBase;
+    for (int b = 0; b < MAX_BUILDINGS; b++) if (IsOurDropOff(b)) return b;
+    return -1;
+}
+
+// Nearest finished drop-off within `maxDist` of a point, or -1.
+static int NearestDropOff(Vector2 p, float maxDist)
+{
+    int best = -1;
+    float bestDist = maxDist;
+    for (int b = 0; b < MAX_BUILDINGS; b++)
+    {
+        if (!IsOurDropOff(b)) continue;
+        float d = BuildingDistance(b, p);
+        if (d <= bestDist) { bestDist = d; best = b; }
+    }
+    return best;
+}
+
+static bool NodeUsable(int n)
+{
+    return goldNodes[n].active && goldNodes[n].amount > 0 && PathRegion(goldNodes[n].pos) == homeRegion;
+}
+
+// The base a node belongs to: the nearest drop-off within AI_NODE_RANGE_TILES.
+static int NodeBase(int n)
+{
+    return NearestDropOff(goldNodes[n].pos, AI_NODE_RANGE_TILES*TILE_SIZE);
+}
+
+static bool NodeFailed(int n)
+{
+    for (int i = 0; i < failedCount; i++) if (failedNodes[i] == goldNodes[n].serial) return true;
+    return false;
+}
+
+static void ForgetNode(unsigned int serial)
+{
+    if (failedCount < AI_MAX_FAILED_NODES) failedNodes[failedCount++] = serial;
+}
+
+// Rally a base's new units toward the gold node nearest to it.
+static void RallyTowardNode(int base)
+{
+    int node = EconomyNearestNode(BuildingCentre(base), AI_NODE_RANGE_TILES*TILE_SIZE);
+    if (node != -1) BuildingSetRally(base, Vector2Lerp(BuildingCentre(base), goldNodes[node].pos, 0.6f));
+}
+
+// --- 1. Barracks --------------------------------------------------------------------
+
 static void BarracksTick(void)
 {
+    barracksNote[0] = '\0';
     bool have = BuildingIsAlive(aiBarracks, aiBarracksSerial);
     if (have && !buildings[aiBarracks].constructing) return;   // done
-    if (!BuildingIsAlive(aiBase, aiBaseSerial)) return;
+    int anchor = AnchorBase();
+    if (anchor == -1) return;
 
-    // Count our workers, and note whether someone is already building it.
     int workers = 0, freeWorker = -1;
     bool beingBuilt = false;
     for (int i = 0; i < MAX_UNITS; i++)
@@ -81,24 +151,223 @@ static void BarracksTick(void)
         if (u->buildOrder && have && u->buildSite == aiBarracks) beingBuilt = true;
         else if (freeWorker == -1 && !u->buildOrder) freeWorker = i;
     }
-    if (freeWorker == -1) return;
 
-    if (have)   // unfinished and nobody on it (the builder died): send another
+    if (have)   // unfinished: make sure somebody is building it
     {
-        if (!beingBuilt) BuildingsOrderConstruct(&freeWorker, 1, aiBarracks);
+        Note(barracksNote, sizeof(barracksNote), "Building a Barracks (%d%%)", (int)(BuildingBuildProgress(aiBarracks)*100));
+        if (!beingBuilt && freeWorker != -1) BuildingsOrderConstruct(&freeWorker, 1, aiBarracks);
         return;
     }
 
     int cost = BUILDING_STATS[BUILDING_BARRACKS].cost;
-    if (workers < AI_BARRACKS_WORKERS || EconomyGold(AI_TEAM) < cost) return;
+    if (workers < AI_BARRACKS_WORKERS) { Note(barracksNote, sizeof(barracksNote), "Needs %d workers for a Barracks", AI_BARRACKS_WORKERS); return; }
+    if (EconomyGold(AI_TEAM) < cost) { Note(barracksNote, sizeof(barracksNote), "Saving for a Barracks (%d/%d)", EconomyGold(AI_TEAM), cost); return; }
     Vector2 spot;
-    if (!BuildingsFindSpot(BUILDING_BARRACKS, BuildingCentre(aiBase), &spot)) return;
+    if (freeWorker == -1 || !BuildingsFindSpot(BUILDING_BARRACKS, BuildingCentre(anchor), &spot)) return;
     if (!EconomySpend(AI_TEAM, cost)) return;
     int site = BuildingPlace(BUILDING_BARRACKS, AI_TEAM, spot, true);
     if (site == -1) { EconomyAdd(AI_TEAM, cost); return; }
     aiBarracks = site;
     aiBarracksSerial = buildings[site].serial;
     BuildingsOrderConstruct(&freeWorker, 1, site);
+    Note(barracksNote, sizeof(barracksNote), "Building a Barracks");
+}
+
+// --- 2. Workers -----------------------------------------------------------------------
+
+static int QueuedWorkers(int b)
+{
+    int n = 0;
+    for (int q = 0; q < buildings[b].queueCount; q++) n += (buildings[b].queue[q] == UNIT_WORKER);
+    return n;
+}
+
+static void WorkerTick(void)
+{
+    workerNote[0] = '\0';
+    // Who works where: a worker belongs to the base of the node it mines (or,
+    // if it isn't mining, the drop-off nearest to it).
+    int homeCount[MAX_BUILDINGS] = { 0 };
+    int workers = 0;
+    for (int n = 0; n < MAX_GOLD_NODES; n++) gatherers[n] = 0;
+    for (int i = 0; i < MAX_UNITS; i++)
+    {
+        const Unit *u = &units[i];
+        if (!u->active || u->team != AI_TEAM || u->type != UNIT_WORKER) continue;
+        workers++;
+        bool mining = (u->gatherState != GATHER_NONE && EconomyNodeIsAlive(u->gatherNode, u->gatherNodeSerial));
+        if (mining) gatherers[u->gatherNode]++;
+        int home = mining ? NodeBase(u->gatherNode) : NearestDropOff(u->pos, (float)(MAP_PIXEL_W + MAP_PIXEL_H));
+        if (home != -1) homeCount[home]++;
+    }
+
+    // Each base's target, and the base furthest below it.
+    int best = -1, bestNeed = 0, queued = 0;
+    workerTarget = 0;
+    for (int b = 0; b < MAX_BUILDINGS; b++)
+    {
+        if (!IsOurDropOff(b)) continue;
+        int nodes = 0;
+        for (int n = 0; n < MAX_GOLD_NODES; n++) nodes += (NodeUsable(n) && NodeBase(n) == b);
+        int want = nodes*AI_WORKERS_PER_NODE;
+        if (want > AI_MAX_WORKERS_PER_BASE) want = AI_MAX_WORKERS_PER_BASE;
+        int inQueue = QueuedWorkers(b);
+        int need = want - homeCount[b] - inQueue;
+        workerTarget += want;
+        queued += inQueue;
+        if (need > bestNeed && buildings[b].queueCount < AI_WORKER_QUEUE) { bestNeed = need; best = b; }
+    }
+    workerCount = workers + queued;
+
+    bool waitingForBarracks = !BuildingIsAlive(aiBarracks, aiBarracksSerial) && workers >= AI_BARRACKS_WORKERS;
+    if (best == -1)
+    {
+        if (workerTarget == 0) Note(workerNote, sizeof(workerNote), "No gold left near our bases");
+        else if (workerCount >= workerTarget) Note(workerNote, sizeof(workerNote), "Workers saturated (%d/%d)", workerCount, workerTarget);
+        return;
+    }
+    if (waitingForBarracks) return;   // the Barracks gets the gold first
+    if (BuildingQueueTrain(best, UNIT_WORKER)) Note(workerNote, sizeof(workerNote), "Training workers (%d/%d)", workerCount + 1, workerTarget);
+    else Note(workerNote, sizeof(workerNote), "Saving for a worker (%d/%d)", workerCount, workerTarget);
+}
+
+// --- 3. Expansion ---------------------------------------------------------------------
+
+static int CountOurBases(void)
+{
+    int n = 0;
+    for (int b = 0; b < MAX_BUILDINGS; b++) n += (buildings[b].active && buildings[b].team == AI_TEAM && buildings[b].type == BUILDING_BASE);
+    return n;
+}
+
+// Gold left in the nodes our bases are mining.
+static int OwnGoldLeft(void)
+{
+    int total = 0;
+    for (int n = 0; n < MAX_GOLD_NODES; n++) if (NodeUsable(n) && NodeBase(n) != -1) total += goldNodes[n].amount;
+    return total;
+}
+
+// A node worth a new base: (a) far from our drop-offs, (b) rich enough,
+// (c) reachable, (d) not next to an enemy building. Nearest one wins.
+static int FindExpansionNode(Vector2 from)
+{
+    int best = -1;
+    float bestDist = 0.0f;
+    for (int n = 0; n < MAX_GOLD_NODES; n++)
+    {
+        const GoldNode *g = &goldNodes[n];
+        if (!g->active || NodeFailed(n)) continue;
+        if (NearestDropOff(g->pos, AI_EXPAND_MIN_TILES*TILE_SIZE) != -1) continue;                      // (a)
+        if (g->amount < AI_EXPAND_MIN_GOLD) continue;                                                  // (b)
+        if (PathRegion(g->pos) != homeRegion) continue;                                                // (c)
+        if (BuildingsFindNearestEnemy(g->pos, AI_EXPAND_ENEMY_TILES*TILE_SIZE, AI_TEAM) != -1) continue; // (d)
+        float d = Vector2Distance(from, g->pos);
+        if (best == -1 || d < bestDist) { bestDist = d; best = n; }
+    }
+    return best;
+}
+
+// Check on the expansion being built: finished, destroyed, or builder lost.
+static void WatchExpansion(void)
+{
+    int cost = BUILDING_STATS[BUILDING_BASE].cost;
+
+    if (!BuildingIsAlive(expSite, expSiteSerial))   // destroyed by the player
+    {
+        expanding = false;
+        ForgetNode(expNodeSerial);
+        Note(expandNote, sizeof(expandNote), "Lost an expansion");
+        return;
+    }
+    if (!buildings[expSite].constructing)   // finished
+    {
+        expanding = false;
+        RallyTowardNode(expSite);
+        Note(expandNote, sizeof(expandNote), "Expansion finished");
+        return;
+    }
+    bool builderOk = UnitIsAlive(expBuilder, expBuilderSerial) && units[expBuilder].buildOrder && units[expBuilder].buildSite == expSite;
+    if (!builderOk)   // the builder died (or was pulled away): give up on this spot
+    {
+        BuildingDestroy(expSite);
+        EconomyAdd(AI_TEAM, cost);   // our own cancellation: refunded
+        ForgetNode(expNodeSerial);
+        expanding = false;
+        Note(expandNote, sizeof(expandNote), "Gave up an expansion (builder lost)");
+        return;
+    }
+    Note(expandNote, sizeof(expandNote), "Building an expansion (%d%%)", (int)(BuildingBuildProgress(expSite)*100));
+}
+
+static void ExpandTick(void)
+{
+    expandNote[0] = '\0';
+    savingForExpansion = false;
+    if (expanding) { WatchExpansion(); return; }   // this check is spent watching it (or giving up)
+
+    int anchor = AnchorBase();
+    if (anchor == -1 || CountOurBases() >= AI_MAX_BASES) return;
+    int node = FindExpansionNode(BuildingCentre(anchor));
+    if (node == -1) return;   // nothing qualifies: don't expand
+
+    int cost = BUILDING_STATS[BUILDING_BASE].cost;
+    bool runningLow = OwnGoldLeft() < AI_EXPAND_LOW_GOLD;
+    int needed = cost + (runningLow ? 0 : AI_EXPAND_RESERVE);
+    if (EconomyGold(AI_TEAM) < needed)
+    {
+        // Only hold back the army for it when this base can't grow any more
+        // (workers saturated) or its gold is running out; otherwise expand
+        // whenever spare gold happens to be there.
+        bool saturated = (workerCount >= workerTarget);
+        if (saturated || runningLow)
+        {
+            savingForExpansion = AI_SAVE_FOR_EXPANSION;
+            Note(expandNote, sizeof(expandNote), "Saving for an expansion (%d/%d)", EconomyGold(AI_TEAM), needed);
+        }
+        return;
+    }
+
+    Vector2 spot;
+    if (!BuildingsFindSpot(BUILDING_BASE, goldNodes[node].pos, &spot) || PathRegion(spot) != homeRegion)
+    {
+        ForgetNode(goldNodes[node].serial);   // no room there
+        return;
+    }
+
+    // The nearest worker that isn't building something.
+    int builder = -1;
+    float bestDist = 0.0f;
+    for (int i = 0; i < MAX_UNITS; i++)
+    {
+        const Unit *u = &units[i];
+        if (!u->active || u->team != AI_TEAM || u->type != UNIT_WORKER || u->buildOrder) continue;
+        float d = Vector2Distance(u->pos, spot);
+        if (builder == -1 || d < bestDist) { bestDist = d; builder = i; }
+    }
+    if (builder == -1 || !EconomySpend(AI_TEAM, cost)) return;
+    int site = BuildingPlace(BUILDING_BASE, AI_TEAM, spot, true);
+    if (site == -1) { EconomyAdd(AI_TEAM, cost); return; }
+    BuildingsOrderConstruct(&builder, 1, site);
+
+    expanding = true;
+    expSite = site;               expSiteSerial = buildings[site].serial;
+    expBuilder = builder;         expBuilderSerial = units[builder].serial;
+    expNode = node;               expNodeSerial = goldNodes[node].serial;
+    Note(expandNote, sizeof(expandNote), "Expanding to gold at %d,%d", (int)(goldNodes[node].pos.x/TILE_SIZE), (int)(goldNodes[node].pos.y/TILE_SIZE));
+}
+
+// --- Combat units -----------------------------------------------------------------------
+
+static void TrainTick(void)
+{
+    if (--trainCountdown > 0) return;
+    trainCountdown = AI_TRAIN_TICKS;
+    if (savingForExpansion) return;   // gold is going into the next base
+    if (!BuildingIsAlive(aiBarracks, aiBarracksSerial)) return;
+    const Building *b = &buildings[aiBarracks];
+    if (b->constructing || b->queueCount >= 2) return;
+    if (BuildingQueueTrain(aiBarracks, (trainCount % 2) ? UNIT_RANGED : UNIT_MELEE)) trainCount++;
 }
 
 static int NearestPlayerUnit(Vector2 from)
@@ -118,13 +387,59 @@ static int NearestPlayerUnit(Vector2 from)
     return cellTarget[cell];
 }
 
+// --- 4. Idle workers ---------------------------------------------------------------------
+
+// The node near the worker's base with the fewest workers (spreads them out);
+// failing that, the nearest reachable node anywhere.
+static int PickNode(const Unit *u)
+{
+    int home = NearestDropOff(u->pos, (float)(MAP_PIXEL_W + MAP_PIXEL_H));
+    int best = -1;
+    float bestScore = 0.0f;
+    for (int n = 0; n < MAX_GOLD_NODES; n++)
+    {
+        if (!NodeUsable(n)) continue;
+        bool local = (home != -1 && NodeBase(n) == home);
+        float score = (local ? 0.0f : 1000000.0f) + gatherers[n]*10000.0f + Vector2Distance(u->pos, goldNodes[n].pos);
+        if (best == -1 || score < bestScore) { bestScore = score; best = n; }
+    }
+    return best;
+}
+
+void AiInit(Vector2 base, Vector2 spawn, int baseBuilding)
+{
+    playerBase = base;
+    aiSpawn = spawn;
+    aiBase = baseBuilding;
+    aiBaseSerial = (baseBuilding >= 0) ? buildings[baseBuilding].serial : 0;
+    thinkCountdown = AI_THINK_TICKS;
+    trainCountdown = AI_TRAIN_TICKS;
+    expandCountdown = AI_EXPAND_CHECK_TICKS;
+    trainCount = 0;
+    aiBarracks = -1;
+    expanding = savingForExpansion = false;
+    failedCount = 0;
+    workerCount = workerTarget = baseCount = 0;
+    barracksNote[0] = workerNote[0] = expandNote[0] = '\0';
+    if (baseBuilding >= 0) RallyTowardNode(baseBuilding);
+}
+
 void AiTick(void)
 {
     TrainTick();
     if (--thinkCountdown > 0) return;
     thinkCountdown = AI_THINK_TICKS;
     thinkStamp++;
+
+    PathComputeRegions();   // buildings may have changed what's reachable
+    int anchor = AnchorBase();
+    homeRegion = (anchor != -1) ? PathRegion(buildings[anchor].rally) : 0;
+    baseCount = CountOurBases();
+
     BarracksTick();
+    WorkerTick();
+    expandCountdown -= AI_THINK_TICKS;
+    if (expandCountdown <= 0) { expandCountdown = AI_EXPAND_CHECK_TICKS; ExpandTick(); }
 
     // Scanning the pool every 2 s to find our idle units is cheap; it isn't a
     // "who's nearby" search, those go through the grid.
@@ -137,8 +452,8 @@ void AiTick(void)
 
         if (u->type == UNIT_WORKER)
         {
-            int node = EconomyNearestNode(u->pos, (float)(MAP_PIXEL_W + MAP_PIXEL_H));
-            if (node != -1) EconomyOrderGather(&i, 1, node);
+            int node = PickNode(u);
+            if (node != -1) { EconomyOrderGather(&i, 1, node); gatherers[node]++; }
             continue;
         }
 
@@ -157,4 +472,17 @@ void AiSpawnWave(int count)
     if (count > MAX_UNITS) count = MAX_UNITS;
     int found = UnitsOpenSpots(aiSpawn, count, spots);
     for (int k = 0; k < found; k++) UnitSpawn(spots[k], (k % 2) ? UNIT_RANGED : UNIT_MELEE, AI_TEAM);
+}
+
+const char *AiDebugLine(void)
+{
+    return TextFormat("AI gold %d  workers %d/%d  bases %d", EconomyGold(AI_TEAM), workerCount, workerTarget, baseCount);
+}
+
+const char *AiStatus(void)
+{
+    if (expandNote[0]) return expandNote;
+    if (barracksNote[0]) return barracksNote;
+    if (workerNote[0]) return workerNote;
+    return "Training army";
 }

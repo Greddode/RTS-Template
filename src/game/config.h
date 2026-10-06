@@ -113,4 +113,24 @@ static const ControlInfo CONTROLS[] = {
 };
 #define CONTROLS_COUNT ((int)(sizeof(CONTROLS)/sizeof(CONTROLS[0])))
 
+// --- AI tuning (ai.c) -------------------------------------------------------------
+// Every number the computer opponent uses, so it can be tuned without reading ai.c.
+#define AI_THINK_TICKS          (TICK_RATE*2)   // decisions every 2 s
+#define AI_TRAIN_TICKS          (TICK_RATE*5)   // try to queue a combat unit every 5 s
+#define AI_WAVE_SIZE            20              // F1 debug wave
+#define AI_BARRACKS_WORKERS     3               // workers needed before it builds a Barracks
+#define AI_WORKERS_PER_NODE     8               // worker target: this many per gold node near a base...
+#define AI_MAX_WORKERS_PER_BASE 16              // ...but at most this many per base
+#define AI_WORKER_QUEUE         1               // workers queued at a base at once (keeps gold free)
+#define AI_NODE_RANGE_TILES     12              // a node this close to a finished drop-off belongs to that base
+#define AI_EXPAND_CHECK_TICKS   (TICK_RATE*4)   // look for an expansion every 4 s
+#define AI_EXPAND_MIN_TILES     15              // (a) candidate node: at least this far from all our drop-offs
+#define AI_EXPAND_MIN_GOLD      800             // (b) ...with at least this much gold left
+#define AI_EXPAND_ENEMY_TILES   20              // (d) ...and no enemy building this close to it
+#define AI_EXPAND_RESERVE       100             // "spare gold": the base's cost plus this
+#define AI_EXPAND_LOW_GOLD      2000            // gold left in our nodes below this: expand without the reserve
+#define AI_SAVE_FOR_EXPANSION   1               // 1: pause combat training while saving for an expansion
+#define AI_MAX_BASES            3               // cap on bases (finished or being built)
+#define AI_MAX_FAILED_NODES     16              // nodes it gave up expanding to (builder died) are remembered
+
 #endif

@@ -75,6 +75,27 @@ The camera pans and zooms as in the game. The tool buttons are generated from `T
 so new maps show up in git. A shipped game saves next to the executable. **In the browser**,
 Save downloads the file instead (browsers can't write to disk), and Load is disabled.
 
+## Computer opponent (AI)
+
+Every 2 seconds the AI:
+
+1. **Barracks:** once it has 3 workers and 150 gold, one worker builds a Barracks near its base.
+2. **Workers:** each base aims for **8 workers per reachable gold node** near it (at most **16**),
+   training at the base that needs them most. When every base is saturated it stops, and the
+   gold goes into the army.
+3. **Expansion:** looks for a gold node that is far from its bases (15+ tiles), still rich
+   (800+ gold), **reachable**, and not near a player building (20 tiles). With a base's cost plus
+   a reserve it sends **one** worker to build a new Base there. It saves up for one (pausing army
+   training) once its workers are saturated or its own gold is running low. One expansion at a
+   time, at most 3 bases. If the builder dies, the site is cancelled (refunded) and that node
+   isn't tried again.
+4. **Army:** idle workers go to the near node with the fewest workers; combat units attack the
+   nearest player unit or building. The Barracks queues a Melee or Ranged unit every 5 seconds.
+
+Every number (thresholds, distances, caps, timings) is a named constant in the **AI tuning**
+block of `config.h`. The debug overlay (top left) shows the AI's gold, workers (have/target),
+bases, and what it's currently trying to do.
+
 ## Winning and losing
 
 A side with no buildings left (finished or unfinished) loses. The check runs once per second,
@@ -130,10 +151,10 @@ and `src/editor/` for the editor.
 | `game/camera.c` | Pan / zoom, visible-area queries |
 | `game/units.c` | Unit pool, movement, separation, drawing |
 | `game/grid.c` | Spatial grid for nearby-unit queries |
-| `game/path.c` | A* pathfinding: request queue, per-frame time budget, path smoothing |
+| `game/path.c` | A* pathfinding: request queue, per-frame time budget, path smoothing; walkable regions ("can I get there?") |
 | `game/input.c` | Selection list (units, building, gold node), orders, hotkeys, building placement ghost |
 | `game/combat.c` | Attacking, chasing, auto-targeting (aggro), projectile pool |
-| `game/ai.c` | Enemy AI: mines with its workers, builds a Barracks, trains combat units there on a timer, sends idle units at the player |
+| `game/ai.c` | Enemy AI: trains workers to a per-node target, builds a Barracks, expands to new gold, trains its army, sends idle units at the player |
 | `game/economy.c` | Gold per team, gold node pool, worker mining loop, gold HUD (top right) |
 | `game/buildings.c` | Building pool, tile blocking, placement checks, production queue (cancel/refund), rally points, gold drop-off lookup, construction by workers, drawing |
 | `game/ui.c` | Tiny immediate-mode UI (buttons, panels, labels, tabs, scroll areas), scales with window height, blocks clicks from reaching the game |

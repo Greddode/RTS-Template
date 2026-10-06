@@ -317,3 +317,45 @@ void PathReset(void)
     queueHead = queueCount = 0;
     searching = false;
 }
+
+// --- Regions (connected areas) ------------------------------------------------------
+// Flood fill: walk outward from each unlabelled open tile through its 4
+// neighbours and give everything reached the same number. A* moves
+// diagonally only when both side tiles are open, so it reaches exactly what
+// this 4-neighbour fill reaches.
+static unsigned short regionOf[NODE_COUNT];
+static int            fillQueue[NODE_COUNT];
+
+void PathComputeRegions(void)
+{
+    memset(regionOf, 0, sizeof(regionOf));
+    unsigned short next = 1;
+    for (int start = 0; start < NODE_COUNT; start++)
+    {
+        if (regionOf[start] || !MapTileWalkable(start % MAP_W, start / MAP_W)) continue;
+        int head = 0, tail = 0;
+        fillQueue[tail++] = start;
+        regionOf[start] = next;
+        while (head < tail)
+        {
+            int n = fillQueue[head++], x = n % MAP_W, y = n / MAP_W;
+            for (int d = 0; d < 4; d++)   // the 4 straight directions
+            {
+                int nx = x + DIR_X[d], ny = y + DIR_Y[d];
+                if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+                int m = ny*MAP_W + nx;
+                if (regionOf[m] || !MapTileWalkable(nx, ny)) continue;
+                regionOf[m] = next;
+                fillQueue[tail++] = m;
+            }
+        }
+        next++;
+    }
+}
+
+int PathRegion(Vector2 worldPos)
+{
+    int tx = (int)(worldPos.x/TILE_SIZE), ty = (int)(worldPos.y/TILE_SIZE);
+    if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return 0;
+    return regionOf[ty*MAP_W + tx];
+}
