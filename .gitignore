@@ -85,3 +85,6 @@ build-web/
 # Caude Stuff
 CLAUDE.md
 NOTES.md
+
+# Our map files also end in .map (the *.map rule above is for C linker output)
+!maps/*.map

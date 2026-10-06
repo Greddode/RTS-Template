@@ -21,5 +21,6 @@ void       PathAdvance(int unit);                            // current waypoint
 
 int        PathQueueLength(void);
 double     PathLastFrameMs(void);                            // time PathUpdate() used last frame
+void       PathReset(void);                                  // drop every request and path (new game)
 
 #endif

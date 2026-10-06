@@ -3,6 +3,8 @@
 #ifndef CONFIG_H_INCLUDED
 #define CONFIG_H_INCLUDED
 
+#include "raylib.h"   // for the KEY_ constants below
+
 #define SCREEN_W 1280
 #define SCREEN_H 720
 
@@ -14,11 +16,37 @@
 #define PLAYER_TEAM 0
 #define AI_TEAM     1
 
+// Building types come first: units say where they're trained.
+// To add a building: add it to the enum and give it a row in BUILDING_STATS.
+// If it has a cost and a hotkey, workers can build it (it appears in the
+// inspector's Build buttons automatically).
+typedef enum { BUILDING_NONE = -1, BUILDING_BASE, BUILDING_BARRACKS, BUILDING_TYPE_COUNT } BuildingType;
+
+typedef struct BuildingStats {
+    const char *name;
+    float       hp;
+    int         size;        // in tiles (square)
+    int         cost;        // gold to build; 0 = workers can't build it
+    float       buildTime;   // seconds for one worker
+    int         hotkey;      // build hotkey (workers selected); 0 = none
+    bool        dropOff;     // workers can bring gold here
+} BuildingStats;
+
+static const BuildingStats BUILDING_STATS[BUILDING_TYPE_COUNT] = {
+    //                      name        hp       size  cost  buildTime  hotkey  dropOff
+    [BUILDING_BASE]     = { "Base",     1500.0f, 3,    400,  40.0f,     KEY_B,  true  },
+    [BUILDING_BARRACKS] = { "Barracks",  900.0f, 2,    150,  25.0f,     KEY_K,  false },
+};
+
 // Unit types and their stats. To add a type: add it to the enum, give it a row
-// in UNIT_STATS, and (optionally) a look in UnitsDraw().
+// in UNIT_STATS, and (optionally) a look in UnitsDrawIcon(). `trainedAt` puts
+// a Train button on that building; BUILDING_NONE means it can't be trained.
 typedef enum { UNIT_MELEE, UNIT_RANGED, UNIT_WORKER, UNIT_TYPE_COUNT } UnitType;
 
 typedef struct UnitStats {
+    const char  *name;
+    BuildingType trainedAt;   // which building trains it
+    int          hotkey;      // train hotkey (that building selected)
     float hp;         // starting / maximum health
     float damage;     // per hit
     float range;      // attack reach in world pixels (to a unit's centre, or a building's wall)
@@ -29,23 +57,60 @@ typedef struct UnitStats {
 } UnitStats;
 
 static const UnitStats UNIT_STATS[UNIT_TYPE_COUNT] = {
-    //                 hp      damage  range   cooldown  speed   cost  trainTime
-    [UNIT_MELEE]  = { 120.0f, 12.0f,  16.0f,  0.8f,     75.0f,  75,   6.0f },
-    [UNIT_RANGED] = {  70.0f,  9.0f, 120.0f,  1.2f,     65.0f,  100,  7.0f },
-    [UNIT_WORKER] = {  40.0f,  4.0f,  16.0f,  1.0f,     70.0f,  50,   5.0f },
+    //                 name      trainedAt          hotkey  hp      damage  range   cooldown  speed   cost  trainTime
+    [UNIT_MELEE]  = { "Melee",  BUILDING_BARRACKS, KEY_M,  120.0f, 12.0f,  16.0f,  0.8f,     75.0f,  75,   6.0f },
+    [UNIT_RANGED] = { "Ranged", BUILDING_BARRACKS, KEY_R,   70.0f,  9.0f, 120.0f,  1.2f,     65.0f,  100,  7.0f },
+    [UNIT_WORKER] = { "Worker", BUILDING_BASE,     KEY_W,   40.0f,  4.0f,  16.0f,  1.0f,     70.0f,  50,   5.0f },
 };
 
-// Building types. Buildings are squares of `size` x `size` tiles.
-typedef enum { BUILDING_BASE, BUILDING_TYPE_COUNT } BuildingType;
+// Game states (main.c switches between them).
+typedef enum { STATE_MENU, STATE_PLAYING, STATE_PAUSED, STATE_VICTORY, STATE_DEFEAT, STATE_EDITOR } GameState;
 
-typedef struct BuildingStats {
-    float hp;
-    int   size;   // in tiles
-} BuildingStats;
+// Key bindings. input.c reads these names, and the Controls screen lists them
+// from CONTROLS below, so changing a key here changes both.
+#define KEY_ATTACK_MOVE   KEY_A
+#define KEY_STOP          KEY_S
+#define KEY_HOLD          KEY_H
+#define KEY_PAUSE         KEY_ESCAPE
+#define KEY_DEBUG_WAVE    KEY_F1
+#define KEY_EDITOR        KEY_F2    // while playing: open the map editor on the current map
+#define KEY_UNDO          KEY_Z     // with Ctrl, in the editor
 
-static const BuildingStats BUILDING_STATS[BUILDING_TYPE_COUNT] = {
-    //                  hp       size
-    [BUILDING_BASE] = { 1500.0f, 3 },
+// Every control, for the in-game Controls screen. If `key` isn't 0, "%s" in
+// `input` is replaced by that key's name (so a remapped key shows correctly).
+// Train and Build hotkeys aren't listed here: the Controls screen adds them
+// from UNIT_STATS and BUILDING_STATS.
+typedef enum { CONTROLS_MOUSE, CONTROLS_KEYBOARD, CONTROLS_CATEGORY_COUNT } ControlsCategory;
+
+typedef struct ControlInfo {
+    ControlsCategory category;
+    int              key;      // a KEY_ binding above, or 0 for mouse / fixed inputs
+    const char      *input;
+    const char      *action;
+} ControlInfo;
+
+static const ControlInfo CONTROLS[] = {
+    { CONTROLS_MOUSE,    0,                "Left click / drag",      "Select units / box select" },
+    { CONTROLS_MOUSE,    0,                "Shift + select",         "Add to selection" },
+    { CONTROLS_MOUSE,    0,                "Left click building",    "Select it (inspector shows queue)" },
+    { CONTROLS_MOUSE,    0,                "Left click gold",        "Inspect gold left" },
+    { CONTROLS_MOUSE,    0,                "Click a queue icon",     "Cancel it, refund gold" },
+    { CONTROLS_MOUSE,    0,                "Right click ground",     "Move (building selected: rally point)" },
+    { CONTROLS_MOUSE,    0,                "Right click enemy",      "Attack unit or building" },
+    { CONTROLS_MOUSE,    0,                "Right click gold",       "Workers mine it" },
+    { CONTROLS_MOUSE,    0,                "Right click unfinished", "Workers help build it" },
+    { CONTROLS_MOUSE,    0,                "Placing: left / right",  "Place building / cancel" },
+    { CONTROLS_MOUSE,    0,                "Middle drag",            "Pan camera" },
+    { CONTROLS_MOUSE,    0,                "Mouse wheel",            "Zoom (over a panel: scroll it)" },
+    { CONTROLS_KEYBOARD, 0,                "Arrow keys",             "Pan camera" },
+    { CONTROLS_KEYBOARD, KEY_ATTACK_MOVE,  "%s, then right click",   "Attack-move (fight on the way)" },
+    { CONTROLS_KEYBOARD, KEY_STOP,         "%s",                     "Stop: drop all orders" },
+    { CONTROLS_KEYBOARD, KEY_HOLD,         "%s",                     "Hold position: never chase" },
+    { CONTROLS_KEYBOARD, KEY_PAUSE,        "%s",                     "Cancel placing/attack-move, or pause" },
+    { CONTROLS_KEYBOARD, KEY_DEBUG_WAVE,   "%s",                     "Debug: spawn an enemy wave" },
+    { CONTROLS_KEYBOARD, KEY_EDITOR,       "%s",                     "Map editor on the current map" },
+    { CONTROLS_KEYBOARD, KEY_UNDO,         "Ctrl + %s (editor)",     "Undo tile painting" },
 };
+#define CONTROLS_COUNT ((int)(sizeof(CONTROLS)/sizeof(CONTROLS[0])))
 
 #endif

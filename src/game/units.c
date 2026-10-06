@@ -20,7 +20,8 @@
 // walking, the unit scans for enemies like an idle unit does. When a fight
 // ends with no enemies left nearby, combat.c sends it on to attackMoveDest.
 //
-// Workers ordered to mine are steered by economy.c (EconomyWorkerTick) and
+// Workers ordered to mine are steered by economy.c (EconomyWorkerTick), and
+// workers ordered to construct by buildings.c (BuildingsWorkerTick). Workers
 // don't auto-attack, so they stay on the job.
 //
 // Stop drops every order (the unit is idle, so it still auto-attacks).
@@ -39,6 +40,7 @@
 #include <float.h>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define PLAYER_COLOR        (Color){ 220, 200, 60, 255 }
 #define AI_COLOR            (Color){ 210, 60, 50, 255 }
@@ -237,14 +239,28 @@ void UnitsTick(void)
 
         Vector2 step = { 0 };
         bool gathering = (u->gatherState != GATHER_NONE);
-        if (!u->attacking && !gathering && (!u->moving || u->attackMove)) CombatAcquireTick(i);   // look for enemies
+        bool busy = u->attacking || gathering || u->buildOrder;
+        if (!busy && (!u->moving || u->attackMove)) CombatAcquireTick(i);   // look for enemies
         if (u->attacking) step = CombatUnitTick(i);   // may kill other units
         else if (gathering) step = EconomyWorkerTick(i);
+        else if (u->buildOrder) step = BuildingsWorkerTick(i);
         else if (u->moving) step = UnitFollowPath(i);
 
         if (!u->active) continue;
         step = Vector2Add(step, SeparationPush(i));
         MoveWithTerrain(u, step);
+    }
+}
+
+// Body in team colour plus a type mark: ranged = dark dot, worker = light square.
+void UnitsDrawIcon(UnitType type, int team, Vector2 p, float radius)
+{
+    DrawCircleSector(p, radius, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, (team == PLAYER_TEAM) ? PLAYER_COLOR : AI_COLOR);
+    if (type == UNIT_RANGED) DrawCircleSector(p, radius*0.4f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, RANGED_DOT_COLOR);
+    if (type == UNIT_WORKER)
+    {
+        float s = radius*0.9f;
+        DrawRectangleRec((Rectangle){ p.x - s*0.5f, p.y - s*0.5f, s, s }, WORKER_MARK_COLOR);
     }
 }
 
@@ -265,14 +281,8 @@ void UnitsDraw(Rectangle view, float alpha)
         Vector2 p = Vector2Lerp(u->prevPos, u->pos, alpha);
 
         if (u->selected) DrawCircleSector(p, u->radius + 2.0f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, UNIT_SELECTED_COLOR);
-        DrawCircleSector(p, u->radius, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, (u->team == PLAYER_TEAM) ? PLAYER_COLOR : AI_COLOR);
-        if (u->type == UNIT_RANGED) DrawCircleSector(p, u->radius*0.4f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, RANGED_DOT_COLOR);
-        if (u->type == UNIT_WORKER)
-        {
-            float s = u->radius*0.9f;
-            DrawRectangleRec((Rectangle){ p.x - s*0.5f, p.y - s*0.5f, s, s }, WORKER_MARK_COLOR);
-            if (u->carryGold > 0) DrawCircleSector((Vector2){ p.x + u->radius*0.7f, p.y - u->radius*0.7f }, 2.5f, 0.0f, 360.0f, 6, GOLD);
-        }
+        UnitsDrawIcon(u->type, u->team, p, u->radius);
+        if (u->carryGold > 0) DrawCircleSector((Vector2){ p.x + u->radius*0.7f, p.y - u->radius*0.7f }, 2.5f, 0.0f, 360.0f, 6, GOLD);
 
         // Health bar, only once the unit has taken damage.
         float maxHp = UNIT_STATS[u->type].hp;
@@ -366,6 +376,7 @@ void UnitsOrderMove(const int *ids, int count, Vector2 dest)
         units[id].attackMove = false;
         units[id].holdPosition = false;
         units[id].gatherState = GATHER_NONE;
+        units[id].buildOrder = false;
         UnitMoveTo(id, (k < found) ? spots[spotOrder[k]] : dest);   // more units than open spots: rare
     }
 }
@@ -388,6 +399,7 @@ static void SetAttackTarget(int id, int target, unsigned int serial, bool isBuil
     Unit *u = &units[id];
     StopMoving(id);
     u->gatherState = GATHER_NONE;
+    u->buildOrder = false;
     u->attacking = true;
     u->attackTargetIsBuilding = isBuilding;
     u->attackTarget = target;
@@ -424,6 +436,7 @@ void UnitsOrderStop(const int *ids, int count)
         u->attackMove = false;
         u->holdPosition = false;
         u->gatherState = GATHER_NONE;
+        u->buildOrder = false;
     }
 }
 
@@ -431,4 +444,10 @@ void UnitsOrderHold(const int *ids, int count)
 {
     UnitsOrderStop(ids, count);
     for (int k = 0; k < count; k++) units[ids[k]].holdPosition = true;
+}
+
+void UnitsReset(void)
+{
+    memset(units, 0, sizeof(units));
+    activeCount = 0;
 }

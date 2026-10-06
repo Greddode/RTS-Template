@@ -8,6 +8,7 @@
 #define AI_THINK_TICKS (TICK_RATE*2)   // the AI makes decisions every 2 seconds
 #define AI_TRAIN_TICKS (TICK_RATE*5)   // and tries to queue a combat unit every 5 seconds
 #define AI_WAVE_SIZE   20
+#define AI_BARRACKS_WORKERS 3          // workers needed before the AI builds a Barracks
 
 void AiInit(Vector2 playerBase, Vector2 aiSpawn, int aiBaseBuilding);
 void AiTick(void);              // once per sim tick

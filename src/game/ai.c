@@ -8,8 +8,13 @@
 // Units that are already busy are left alone; once they arrive, combat.c's
 // auto-targeting takes over.
 //
-// Every AI_TRAIN_TICKS the AI base queues a combat unit (melee and ranged in
-// turn), paying gold like the player does. No gold, no unit.
+// Barracks: once the AI has the gold and at least AI_BARRACKS_WORKERS workers,
+// one worker builds a Barracks near the base (first open spot found by
+// BuildingsFindSpot). If the builder dies, another worker takes over; if the
+// Barracks is destroyed, it's rebuilt the same way.
+//
+// Every AI_TRAIN_TICKS the finished Barracks queues a combat unit (melee and
+// ranged in turn), paying gold like the player does. No gold, no unit.
 //
 // Finding "the nearest player unit" uses the spatial grid. Units standing in
 // the same grid cell share one search per think, so a wave of 20 units costs
@@ -28,6 +33,8 @@ static unsigned int aiBaseSerial;  // ...and serial
 static int thinkCountdown = AI_THINK_TICKS;
 static int trainCountdown = AI_TRAIN_TICKS;
 static int trainCount = 0;         // alternates melee / ranged
+static int aiBarracks = -1;        // our Barracks: slot...
+static unsigned int aiBarracksSerial;   // ...and serial
 
 // Per-think cache: grid cell -> nearest player unit found from it.
 static int          cellTarget[GRID_W*GRID_H];
@@ -40,14 +47,58 @@ void AiInit(Vector2 base, Vector2 spawn, int baseBuilding)
     aiSpawn = spawn;
     aiBase = baseBuilding;
     aiBaseSerial = (baseBuilding >= 0) ? buildings[baseBuilding].serial : 0;
+    thinkCountdown = AI_THINK_TICKS;
+    trainCountdown = AI_TRAIN_TICKS;
+    trainCount = 0;
+    aiBarracks = -1;
 }
 
 static void TrainTick(void)
 {
     if (--trainCountdown > 0) return;
     trainCountdown = AI_TRAIN_TICKS;
-    if (!BuildingIsAlive(aiBase, aiBaseSerial) || buildings[aiBase].queueCount >= 2) return;
-    if (BuildingQueueTrain(aiBase, (trainCount % 2) ? UNIT_RANGED : UNIT_MELEE)) trainCount++;
+    if (!BuildingIsAlive(aiBarracks, aiBarracksSerial)) return;
+    const Building *b = &buildings[aiBarracks];
+    if (b->constructing || b->queueCount >= 2) return;
+    if (BuildingQueueTrain(aiBarracks, (trainCount % 2) ? UNIT_RANGED : UNIT_MELEE)) trainCount++;
+}
+
+// Called every think. Builds (or keeps building) one Barracks.
+static void BarracksTick(void)
+{
+    bool have = BuildingIsAlive(aiBarracks, aiBarracksSerial);
+    if (have && !buildings[aiBarracks].constructing) return;   // done
+    if (!BuildingIsAlive(aiBase, aiBaseSerial)) return;
+
+    // Count our workers, and note whether someone is already building it.
+    int workers = 0, freeWorker = -1;
+    bool beingBuilt = false;
+    for (int i = 0; i < MAX_UNITS; i++)
+    {
+        const Unit *u = &units[i];
+        if (!u->active || u->team != AI_TEAM || u->type != UNIT_WORKER) continue;
+        workers++;
+        if (u->buildOrder && have && u->buildSite == aiBarracks) beingBuilt = true;
+        else if (freeWorker == -1 && !u->buildOrder) freeWorker = i;
+    }
+    if (freeWorker == -1) return;
+
+    if (have)   // unfinished and nobody on it (the builder died): send another
+    {
+        if (!beingBuilt) BuildingsOrderConstruct(&freeWorker, 1, aiBarracks);
+        return;
+    }
+
+    int cost = BUILDING_STATS[BUILDING_BARRACKS].cost;
+    if (workers < AI_BARRACKS_WORKERS || EconomyGold(AI_TEAM) < cost) return;
+    Vector2 spot;
+    if (!BuildingsFindSpot(BUILDING_BARRACKS, BuildingCentre(aiBase), &spot)) return;
+    if (!EconomySpend(AI_TEAM, cost)) return;
+    int site = BuildingPlace(BUILDING_BARRACKS, AI_TEAM, spot, true);
+    if (site == -1) { EconomyAdd(AI_TEAM, cost); return; }
+    aiBarracks = site;
+    aiBarracksSerial = buildings[site].serial;
+    BuildingsOrderConstruct(&freeWorker, 1, site);
 }
 
 static int NearestPlayerUnit(Vector2 from)
@@ -73,6 +124,7 @@ void AiTick(void)
     if (--thinkCountdown > 0) return;
     thinkCountdown = AI_THINK_TICKS;
     thinkStamp++;
+    BarracksTick();
 
     // Scanning the pool every 2 s to find our idle units is cheap; it isn't a
     // "who's nearby" search, those go through the grid.
@@ -81,7 +133,7 @@ void AiTick(void)
     for (int i = 0; i < MAX_UNITS; i++)
     {
         Unit *u = &units[i];
-        if (!u->active || u->team != AI_TEAM || u->moving || u->attacking || u->gatherState != GATHER_NONE) continue;
+        if (!u->active || u->team != AI_TEAM || u->moving || u->attacking || u->gatherState != GATHER_NONE || u->buildOrder) continue;
 
         if (u->type == UNIT_WORKER)
         {
@@ -91,7 +143,7 @@ void AiTick(void)
         }
 
         int target = NearestPlayerUnit(u->pos);
-        int building = (target == -1) ? BuildingsFindNearest(u->pos, (float)(MAP_PIXEL_W + MAP_PIXEL_H), AI_TEAM, true) : -1;
+        int building = (target == -1) ? BuildingsFindNearestEnemy(u->pos, (float)(MAP_PIXEL_W + MAP_PIXEL_H), AI_TEAM) : -1;
         if (target != -1) UnitsOrderAttack(&i, 1, target);
         else if (building != -1) UnitsOrderAttackBuilding(&i, 1, building);
         else toBase[toBaseCount++] = i;

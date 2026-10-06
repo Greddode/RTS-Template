@@ -51,8 +51,14 @@ typedef struct Unit {
     int          dropBase;            // base being walked to (slot + serial)
     unsigned int dropBaseSerial;
     int          gatherTicks;         // mining countdown
-    int          gatherRetries;       // path attempts left before giving up
     int          carryGold;
+
+    // Construction (buildings.c) - workers only
+    bool         buildOrder;          // walking to / building an unfinished building
+    int          buildSite;           // building slot...
+    unsigned int buildSiteSerial;     // ...and serial
+
+    int          orderRetries;        // gather/build: path attempts left before giving up
 } Unit;
 
 extern Unit units[MAX_UNITS];
@@ -61,9 +67,11 @@ int  UnitSpawn(Vector2 pos, UnitType type, int team);   // returns the unit's in
 void UnitDespawn(int id);
 bool UnitIsAlive(int id, unsigned int serial);          // is this exact unit still in the game?
 int  UnitsActiveCount(void);
+void UnitsReset(void);   // remove every unit (new game)
 
 void UnitsTick(void);                        // advance every unit by one sim tick
 void UnitsDraw(Rectangle view, float alpha); // alpha: 0..1, how far we are between ticks
+void UnitsDrawIcon(UnitType type, int team, Vector2 centre, float radius);   // the unit's look (also used by the inspector)
 
 // Orders (from the player or the AI)
 void UnitsOrderMove(const int *ids, int count, Vector2 dest);

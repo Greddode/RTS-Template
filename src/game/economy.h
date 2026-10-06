@@ -18,9 +18,10 @@ typedef struct GoldNode {
 
 extern GoldNode goldNodes[MAX_GOLD_NODES];
 
-void EconomyInit(void);
+void EconomyInit(void);   // starting gold, no nodes (new game)
 int  EconomyGold(int team);
 bool EconomySpend(int team, int amount);   // false (and nothing spent) if the team can't afford it
+void EconomyAdd(int team, int amount);     // income or refunds
 
 int  EconomySpawnNode(Vector2 pos, int amount);
 bool EconomyNodeIsAlive(int id, unsigned int serial);
@@ -31,6 +32,7 @@ void    EconomyOrderGather(const int *ids, int count, int node);   // workers on
 Vector2 EconomyWorkerTick(int id);                                  // a gathering worker's step this tick
 
 void EconomyDrawNodes(Rectangle view);
-void EconomyDrawHud(int team);   // gold counter at the top of the screen
+void EconomyDrawNode(Vector2 pos, int amount);   // one node's look (also used by the editor)
+void EconomyDrawHud(int team);   // gold counter, top-right of the screen
 
 #endif

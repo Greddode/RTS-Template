@@ -6,7 +6,8 @@
 // Workers ordered to a node run a small state machine (Unit.gatherState):
 //   TO_NODE  walk to the node
 //   MINING   stand there for MINE_TIME seconds, then take up to CARRY_AMOUNT
-//   TO_BASE  walk to the nearest base of their team and drop the gold off,
+//   TO_BASE  walk to the nearest drop-off (a building with `dropOff` in
+//            BUILDING_STATS, i.e. a Base) and drop the gold off,
 //            then head back to the same node
 // If the node runs out (or there's no base left), the worker goes idle.
 // The node and base are remembered as (slot, serial), like attack targets.
@@ -16,7 +17,9 @@
 #include "config.h"
 #include "map.h"
 #include "units.h"
+#include "ui.h"
 #include "raymath.h"
+#include <string.h>
 
 #define MINE_TIME     2.0f    // seconds per load
 #define CARRY_AMOUNT  8       // gold per trip
@@ -34,6 +37,7 @@ static int gold[2];
 
 void EconomyInit(void)
 {
+    memset(goldNodes, 0, sizeof(goldNodes));
     gold[PLAYER_TEAM] = START_GOLD;
     gold[AI_TEAM] = START_GOLD;
 }
@@ -48,6 +52,11 @@ bool EconomySpend(int team, int amount)
     if (gold[team] < amount) return false;
     gold[team] -= amount;
     return true;
+}
+
+void EconomyAdd(int team, int amount)
+{
+    gold[team] += amount;
 }
 
 int EconomySpawnNode(Vector2 pos, int amount)
@@ -96,11 +105,11 @@ static void GoToNode(int id)
     UnitMoveTo(id, goldNodes[u->gatherNode].pos);
 }
 
-// Find the nearest own base and walk to it. False if the team has no base.
+// Find the nearest own drop-off and walk to it. False if the team has none.
 static bool GoToBase(int id)
 {
     Unit *u = &units[id];
-    int base = BuildingsFindNearest(u->pos, (float)(MAP_PIXEL_W + MAP_PIXEL_H), u->team, false);
+    int base = BuildingsFindDropOff(u->pos, u->team);
     if (base == -1) return false;
     u->gatherState = GATHER_TO_BASE;
     u->dropBase = base;
@@ -125,7 +134,7 @@ void EconomyOrderGather(const int *ids, int count, int node)
         Unit *u = &units[id];
         u->gatherNode = node;
         u->gatherNodeSerial = goldNodes[node].serial;
-        u->gatherRetries = MAX_RETRIES;
+        u->orderRetries = MAX_RETRIES;
         GoToNode(id);
     }
 }
@@ -137,7 +146,7 @@ static Vector2 Walk(int id, bool arrived, bool closeEnoughToWait)
     Unit *u = &units[id];
     if (u->moving) return UnitFollowPath(id);
     if (arrived || closeEnoughToWait) return (Vector2){ 0 };
-    if (u->gatherRetries-- > 0) UnitMoveTo(id, u->target);
+    if (u->orderRetries-- > 0) UnitMoveTo(id, u->target);
     else StopGathering(id);
     return (Vector2){ 0 };
 }
@@ -158,7 +167,7 @@ Vector2 EconomyWorkerTick(int id)
                 UnitStop(id);
                 u->gatherState = GATHER_MINING;
                 u->gatherTicks = (int)(MINE_TIME*TICK_RATE);
-                u->gatherRetries = MAX_RETRIES;
+                u->orderRetries = MAX_RETRIES;
                 return none;
             }
             return Walk(id, false, d <= WAIT_RADIUS);   // crowded node: wait nearby for a gap
@@ -186,7 +195,7 @@ Vector2 EconomyWorkerTick(int id)
             {
                 gold[u->team] += u->carryGold;
                 u->carryGold = 0;
-                u->gatherRetries = MAX_RETRIES;
+                u->orderRetries = MAX_RETRIES;
                 if (EconomyNodeIsAlive(u->gatherNode, u->gatherNodeSerial)) GoToNode(id);
                 else StopGathering(id);   // node ran out while we were away
                 return none;
@@ -205,17 +214,25 @@ void EconomyDrawNodes(Rectangle view)
     {
         const GoldNode *n = &goldNodes[i];
         if (!n->active || !CheckCollisionPointRec(n->pos, view)) continue;
-        float r = NODE_RADIUS*(0.5f + 0.5f*n->amount/(float)GOLD_NODE_AMOUNT);   // shrinks as it's mined
-        DrawPoly(n->pos, 4, r + 2.0f, 45.0f, NODE_EDGE);
-        DrawPoly(n->pos, 4, r, 45.0f, NODE_COLOR);
+        EconomyDrawNode(n->pos, n->amount);
     }
+}
+
+void EconomyDrawNode(Vector2 pos, int amount)
+{
+    float frac = amount/(float)GOLD_NODE_AMOUNT;
+    if (frac > 1.0f) frac = 1.0f;   // a big map-file node doesn't get huge
+    float r = NODE_RADIUS*(0.5f + 0.5f*frac);   // shrinks as it's mined
+    DrawPoly(pos, 4, r + 2.0f, 45.0f, NODE_EDGE);
+    DrawPoly(pos, 4, r, 45.0f, NODE_COLOR);
 }
 
 void EconomyDrawHud(int team)
 {
     const char *text = TextFormat("Gold: %d", gold[team]);
-    int w = MeasureText(text, 20);
-    int x = GetScreenWidth()/2 - w/2;
-    DrawRectangle(x - 12, 0, w + 24, 30, Fade(BLACK, 0.6f));
-    DrawText(text, x, 5, 20, GOLD);
+    float size = Ui(22.0f);
+    float w = (float)MeasureText(text, (int)size);
+    float x = GetScreenWidth() - w - Ui(14.0f);   // top-right corner
+    UiPanel((Rectangle){ x - Ui(14.0f), 0.0f, w + Ui(28.0f), Ui(34.0f) });
+    UiLabel(text, x, Ui(6.0f), size, GOLD);
 }

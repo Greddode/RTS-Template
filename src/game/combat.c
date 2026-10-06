@@ -36,6 +36,7 @@
 #include "map.h"
 #include "units.h"
 #include "raymath.h"
+#include <string.h>
 
 #define CHASE_RETHINK_TICKS 10                   // how often a chasing unit re-plans (3x per second)
 #define PROJECTILE_SPEED    320.0f               // world px per second
@@ -105,7 +106,7 @@ static bool AttackNearest(int id, float radius)
     Unit *u = &units[id];
     int enemy = GridFindNearestEnemy(u->pos, radius, u->team);
     if (enemy != -1) { UnitsOrderAttack(&id, 1, enemy); return true; }
-    int building = BuildingsFindNearest(u->pos, radius, u->team, true);
+    int building = BuildingsFindNearestEnemy(u->pos, radius, u->team);
     if (building != -1) { UnitsOrderAttackBuilding(&id, 1, building); return true; }
     return false;
 }
@@ -257,4 +258,10 @@ void CombatProjectilesDraw(Rectangle view, float alpha)
 int CombatProjectileCount(void)
 {
     return projectileCount;
+}
+
+void CombatReset(void)
+{
+    memset(projectiles, 0, sizeof(projectiles));
+    projectileCount = 0;
 }

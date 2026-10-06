@@ -7,6 +7,7 @@
 extern Camera2D gameCamera;
 
 void      CamInit(void);
+void      CamLookAt(Vector2 worldPos);   // centre the view on a point (e.g. the player's base)
 void      CamUpdate(float dt);   // read keyboard/mouse, call once per frame
 Rectangle CamViewRect(void);     // visible area in world coords, for culling
 Vector2   CamMouseWorld(void);   // mouse position in world coords

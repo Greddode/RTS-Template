@@ -15,5 +15,6 @@ void    CombatAcquireTick(int id); // idle or attack-moving unit: attack a nearb
 void CombatProjectilesTick(void);  // move projectiles, apply hits; once per sim tick
 void CombatProjectilesDraw(Rectangle view, float alpha);
 int  CombatProjectileCount(void);
+void CombatReset(void);   // remove every projectile (new game)
 
 #endif

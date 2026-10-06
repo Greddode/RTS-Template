@@ -1,4 +1,26 @@
-// main.c - Window, game loop and debug overlay.
+// main.c - Window, game states, game loop and debug overlay.
+//
+// Game states (config.h): MENU -> Play (pick a map) -> PLAYING <-> PAUSED (Esc),
+// and PLAYING -> VICTORY / DEFEAT when one side has no buildings left.
+// Each frame works with the state it STARTED in; a change (e.g. Esc opening
+// the pause menu) takes effect next frame, so one key press can't count twice.
+// While PAUSED nothing in the simulation runs: no ticks, no pathfinding, no
+// game input. The frozen world is still drawn behind a dim overlay.
+// "Main Menu" then "Play" calls StartNewGame(), which resets every pool.
+//
+// Maps: StartNewGame() loads the chosen file from maps/ (mapfile.c). If the
+// file has an error, the message (file and line) is shown and the generated
+// "Random" map is used instead.
+//
+// Editor (editor/editor.c): "Map Editor" in the main menu, or F2 while
+// playing. The editor works on its own copy of the map; when it was opened
+// from a game, the game's map and camera are backed up and restored on exit,
+// so the paused game carries on untouched. Test Play replaces that game with
+// the editor's map; its "Back to Editor" resets everything first.
+//
+// Win / lose: once a second (not every tick), after a short grace period, a
+// side with no buildings at all (finished or not) has lost. VICTORY and DEFEAT
+// freeze the sim like PAUSED and show Play Again / Main Menu.
 //
 // Fixed timestep: the simulation (units, buildings, projectiles, AI) runs exactly
 // TICK_RATE times per second no matter the frame rate, so the game behaves the same on a slow
@@ -13,12 +35,19 @@
 #include "camera.h"
 #include "combat.h"
 #include "economy.h"
+#include "editor.h"
 #include "grid.h"
 #include "input.h"
+#include "inspector.h"
 #include "map.h"
+#include "mapfile.h"
+#include "menu.h"
 #include "path.h"
+#include "ui.h"
 #include "units.h"
 #include "raymath.h"
+#include <stdio.h>
+#include <string.h>
 
 #if defined(__EMSCRIPTEN__)
     #include <emscripten/emscripten.h>
@@ -36,33 +65,42 @@
 #define MAX_FRAME_TIME  0.25f    // after a long stall, don't try to catch up more than this
 #define PERF_LOG_EVERY  5.0      // seconds between performance lines in the console
 
+#define MENU_BG         (Color){ 24, 30, 36, 255 }
+#define PAUSE_DIM       0.55f    // how dark the frozen world gets behind the pause menu
+#define GAME_OVER_GRACE (TICK_RATE*5)   // no win/lose check in the first 5 s of a game
+#define GAME_OVER_EVERY TICK_RATE       // then check once per second
+#define MAP_ERROR_TIME  6.0             // seconds a map loading error stays on screen
+
+static GameState state = STATE_MENU;
+static bool quitRequested = false;     // Exit button (desktop only)
 static double tickAccumulator = 0.0;   // unsimulated time carried over between frames
 static double lastTickMs = 0.0;        // CPU time of the most recent tick
 static double nextPerfLog = PERF_LOG_EVERY;
+static int perfFrames = 0;             // frames since the last performance line
+static long gameTicks = 0;             // sim ticks since this game started
+static char currentMap[256] = "";      // map file being played ("" = Random), for Play Again
+static bool editorFromGame = false;    // editor opened with F2: Exit returns to the paused game
+static bool testPlaying = false;       // playing the editor's map: leaving goes back to the editor
+static Camera2D savedCamera;           // the game's camera while the editor borrows it
 
 static void SetupStart(Vector2 playerBase, Vector2 aiBase);
+static void StartNewGame(const char *mapPath);
 static void UpdateDrawFrame(void);
 static void DrawOverlay(void);
 
 int main(void)
 {
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);   // the UI scales with window height
     InitWindow(SCREEN_W, SCREEN_H, "RTS Kit");
-    SetExitKey(KEY_NULL);   // Esc is used to cancel orders; close with the window's X
-
-    MapGenerate(MAP_SEED);
-    CamInit();
-    EconomyInit();
-    GridRebuild();   // the grid must exist before anything queries it (placing a base does)
-    Vector2 playerBase = { MAP_PIXEL_W/2.0f, MAP_PIXEL_H/2.0f };
-    SetupStart(playerBase, Vector2Add(playerBase, AI_BASE_OFFSET));
-    GridRebuild();
+    SetExitKey(KEY_NULL);   // Esc opens the pause menu instead of closing the window
+    InspectorCheckHotkeys();   // logs a warning if two hotkeys clash
 
 #if defined(__EMSCRIPTEN__)
     // The browser owns the main loop: it calls us once per frame.
     emscripten_set_main_loop(UpdateDrawFrame, 0, 1);
 #else
     SetTargetFPS(60);
-    while (!WindowShouldClose())
+    while (!WindowShouldClose() && !quitRequested)
     {
         UpdateDrawFrame();
     }
@@ -96,8 +134,8 @@ static void SetupStart(Vector2 playerBase, Vector2 aiBase)
 {
     MapClearArea(playerBase, BASE_CLEARING);
     MapClearArea(aiBase, BASE_CLEARING);
-    BuildingPlace(BUILDING_BASE, PLAYER_TEAM, playerBase);
-    int aiBaseId = BuildingPlace(BUILDING_BASE, AI_TEAM, aiBase);
+    BuildingPlace(BUILDING_BASE, PLAYER_TEAM, playerBase, false);
+    int aiBaseId = BuildingPlace(BUILDING_BASE, AI_TEAM, aiBase, false);
 
     SpawnNodesNear(playerBase, 150.0f);   // arcs facing away from the other base
     SpawnNodesNear(aiBase, -30.0f);
@@ -117,20 +155,138 @@ static void SetupStart(Vector2 playerBase, Vector2 aiBase)
     AiInit(playerBase, aiBase, aiBaseId);
 }
 
-static void UpdateDrawFrame(void)
+// Empty every pool and reset every system.
+static void ResetWorld(void)
 {
+    UnitsReset();
+    BuildingsReset();
+    CombatReset();
+    PathReset();
+    InputReset();
+    EconomyInit();
+    GridRebuild();   // the grid must exist before anything queries it (placing a base does)
+}
+
+// A fresh game on a map file, or the generated map when mapPath is NULL / "".
+static void StartNewGame(const char *mapPath)
+{
+    // Copy via a temporary: Play Again passes currentMap itself, and copying a
+    // string onto itself (overlapping memory) is undefined behaviour in C.
+    char path[sizeof(currentMap)];
+    snprintf(path, sizeof(path), "%s", mapPath ? mapPath : "");
+    memcpy(currentMap, path, sizeof(currentMap));
+    ResetWorld();
+
+    bool loaded = false;
+    if (currentMap[0] != '\0')
+    {
+        MapStart start;
+        loaded = MapFileLoad(currentMap, &start);
+        if (loaded)
+        {
+            AiInit(start.baseCentre[PLAYER_TEAM], start.baseCentre[AI_TEAM], start.aiBase);
+            CamInit();
+            CamLookAt(start.baseCentre[PLAYER_TEAM]);
+        }
+        else
+        {
+            UiShowMessageFor(TextFormat("%s - playing the Random map instead", MapFileError()), MAP_ERROR_TIME);
+            ResetWorld();   // the file may have placed some things before failing
+        }
+    }
+
+    if (!loaded)
+    {
+        MapGenerate(MAP_SEED);
+        CamInit();
+        Vector2 playerBase = { MAP_PIXEL_W/2.0f, MAP_PIXEL_H/2.0f };
+        SetupStart(playerBase, Vector2Add(playerBase, AI_BASE_OFFSET));
+    }
+
+    GridRebuild();
+    tickAccumulator = 0.0;
+    gameTicks = 0;
+}
+
+// --- Editor -------------------------------------------------------------------------
+static void OpenEditorFromGame(void)
+{
+    MapBackup();
+    savedCamera = gameCamera;
+    EditorOpenFromGame();
+    editorFromGame = true;
+    state = STATE_EDITOR;
+}
+
+static void CloseEditor(void)
+{
+    if (editorFromGame)   // back to the paused game, exactly as it was
+    {
+        MapRestore();
+        gameCamera = savedCamera;
+        editorFromGame = false;
+        state = STATE_PAUSED;
+    }
+    else state = STATE_MENU;
+    MenuOpen();
+}
+
+static void StartTestPlay(void)
+{
+    editorFromGame = false;   // the paused game (if any) is replaced by the test game
+    testPlaying = true;
+    MenuSetTestPlay(true);
+    StartNewGame(EditorTestPlayPath());
+    state = STATE_PLAYING;
+}
+
+// Leaving a test game: clear everything it created, then show the editor again.
+static void ReturnToEditor(void)
+{
+    ResetWorld();
+    testPlaying = false;
+    MenuSetTestPlay(false);
+    EditorResume();
+    state = STATE_EDITOR;
+}
+
+// Once a second after the grace period: a side with no buildings has lost.
+static void CheckGameOver(void)
+{
+    if (gameTicks < GAME_OVER_GRACE || gameTicks % GAME_OVER_EVERY != 0) return;
+    if (BuildingsCount(PLAYER_TEAM) == 0) { state = STATE_DEFEAT; MenuOpen(); }
+    else if (BuildingsCount(AI_TEAM) == 0) { state = STATE_VICTORY; MenuOpen(); }
+}
+
+// Input, pathfinding and the fixed sim ticks. Only runs while PLAYING.
+static void UpdatePlaying(void)
+{
+    // Esc cancels a pending attack-move / building placement first; otherwise it pauses.
+    if (IsKeyPressed(KEY_PAUSE) && !InputHasPendingCommand())
+    {
+        state = STATE_PAUSED;
+        MenuOpen();
+        return;
+    }
+    if (IsKeyPressed(KEY_EDITOR))   // F2: the editor on this map (or back to it from a test game)
+    {
+        if (testPlaying) ReturnToEditor();
+        else OpenEditorFromGame();
+        return;
+    }
+
     float frameTime = GetFrameTime();
     if (frameTime > MAX_FRAME_TIME) frameTime = MAX_FRAME_TIME;
 
     // Per-frame: things that should feel instant.
     CamUpdate(frameTime);
     InputUpdate();
-    if (IsKeyPressed(KEY_F1)) AiSpawnWave(AI_WAVE_SIZE);   // debug: test wave
+    if (IsKeyPressed(KEY_DEBUG_WAVE)) AiSpawnWave(AI_WAVE_SIZE);   // debug: test wave
     PathUpdate();   // budgeted: leftover requests wait for the next frame
 
     // Fixed ticks: run as many as the elapsed time covers (0, 1 or several).
     tickAccumulator += frameTime;
-    while (tickAccumulator >= TICK_DT)
+    while (tickAccumulator >= TICK_DT && state == STATE_PLAYING)   // game over stops the ticks at once
     {
         double start = GetTime();
         UnitsTick();
@@ -140,41 +296,100 @@ static void UpdateDrawFrame(void)
         GridRebuild();
         lastTickMs = (GetTime() - start)*1000.0;
         tickAccumulator -= TICK_DT;
+        gameTicks++;
+        CheckGameOver();
     }
-    float alpha = (float)(tickAccumulator/TICK_DT);
+}
+
+static void DrawWorld(void)
+{
+    float alpha = (float)(tickAccumulator/TICK_DT);   // frozen while paused, so the picture holds still
+    BeginMode2D(gameCamera);
+        Rectangle view = CamViewRect();
+        MapDraw(view);
+        EconomyDrawNodes(view);
+        BuildingsDraw(view);
+        UnitsDraw(view, alpha);
+        CombatProjectilesDraw(view, alpha);
+        InputDraw();
+    EndMode2D();
+}
+
+static void UpdateDrawFrame(void)
+{
+    UiBegin();
+    GameState frameState = state;   // changes made below take effect next frame
+
+    if (frameState == STATE_PLAYING) UpdatePlaying();
 
     BeginDrawing();
-        ClearBackground(BLACK);
-        BeginMode2D(gameCamera);
-            Rectangle view = CamViewRect();
-            MapDraw(view);
-            EconomyDrawNodes(view);
-            BuildingsDraw(view);
-            UnitsDraw(view, alpha);
-            CombatProjectilesDraw(view, alpha);
-            InputDraw();
-        EndMode2D();
+    ClearBackground(frameState == STATE_MENU ? MENU_BG : BLACK);
+
+    if (frameState == STATE_MENU)
+    {
+        MenuAction action = MenuMain();
+        if (action == MENU_PLAY) { StartNewGame(MenuChosenMap()); state = STATE_PLAYING; }
+        if (action == MENU_EDITOR) { editorFromGame = false; EditorOpenNew(64); state = STATE_EDITOR; }
+        if (action == MENU_EXIT) quitRequested = true;
+    }
+    else if (frameState == STATE_EDITOR)
+    {
+        EditorAction action = EditorFrame();
+        if (action == EDITOR_EXIT) CloseEditor();
+        if (action == EDITOR_TEST_PLAY) StartTestPlay();
+    }
+    else if (frameState == STATE_PLAYING)
+    {
+        DrawWorld();
         EconomyDrawHud(PLAYER_TEAM);
-        InputDrawHud();
+        InspectorDraw();   // has the Train/Build buttons: only while playing
+        UiDrawMessage();
         DrawOverlay();
+    }
+    else if (frameState == STATE_VICTORY || frameState == STATE_DEFEAT)
+    {
+        DrawWorld();   // frozen, like paused
+        EconomyDrawHud(PLAYER_TEAM);
+        DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, PAUSE_DIM));
+        MenuAction action = MenuGameOver(frameState == STATE_VICTORY);
+        if (action == MENU_PLAY) { StartNewGame(currentMap); state = STATE_PLAYING; }   // same map again
+        if (action == MENU_MAIN_MENU) { if (testPlaying) ReturnToEditor(); else { state = STATE_MENU; MenuOpen(); } }
+    }
+    else   // STATE_PAUSED
+    {
+        DrawWorld();
+        EconomyDrawHud(PLAYER_TEAM);
+        DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, PAUSE_DIM));
+        MenuAction action = MenuPause();
+        if (action == MENU_RESUME) state = STATE_PLAYING;
+        if (action == MENU_MAIN_MENU) { if (testPlaying) ReturnToEditor(); else { state = STATE_MENU; MenuOpen(); } }
+        if (action == MENU_EXIT) quitRequested = true;
+    }
+
     EndDrawing();
 
+    // Count frames ourselves: raylib's GetFPS() only samples when it's called,
+    // and in the menu nothing else calls it, so it would report nonsense.
+    perfFrames++;
     if (GetTime() >= nextPerfLog)
     {
-        TraceLog(LOG_INFO, "PERF: %d FPS | %d units | %d projectiles | tick %.2f ms | paths queued %d", GetFPS(), UnitsActiveCount(), CombatProjectileCount(), lastTickMs, PathQueueLength());
+        static const char *stateNames[] = { "menu", "playing", "paused", "victory", "defeat", "editor" };
+        TraceLog(LOG_INFO, "PERF: %s | %.0f FPS | %d units | %d projectiles | tick %.2f ms | paths queued %d",
+                 stateNames[state], perfFrames/PERF_LOG_EVERY, UnitsActiveCount(), CombatProjectileCount(), lastTickMs, PathQueueLength());
         nextPerfLog += PERF_LOG_EVERY;
+        perfFrames = 0;
     }
 }
 
 static void DrawOverlay(void)
 {
-    DrawRectangle(0, 0, 330, 116, Fade(BLACK, 0.6f));
-    DrawFPS(10, 8);
-    DrawText(TextFormat("Units: %d   Projectiles: %d", UnitsActiveCount(), CombatProjectileCount()), 10, 32, 16, RAYWHITE);
-    DrawText(TextFormat("Sim tick: %.2f ms", lastTickMs), 10, 52, 16, RAYWHITE);
-    DrawText(TextFormat("Paths queued: %d   Path: %.2f ms", PathQueueLength(), PathLastFrameMs()), 10, 72, 16, RAYWHITE);
-    DrawText(TextFormat("AI gold: %d", EconomyGold(AI_TEAM)), 10, 92, 16, RAYWHITE);
+    float x = Ui(10.0f), size = Ui(16.0f), line = Ui(20.0f);
+    UiPanel((Rectangle){ 0, 0, Ui(330.0f), Ui(120.0f) });
+    UiLabel(TextFormat("%d FPS", GetFPS()), x, Ui(8.0f), Ui(20.0f), LIME);
+    UiLabel(TextFormat("Units: %d   Projectiles: %d", UnitsActiveCount(), CombatProjectileCount()), x, Ui(8.0f) + line*1.2f, size, RAYWHITE);
+    UiLabel(TextFormat("Sim tick: %.2f ms", lastTickMs), x, Ui(8.0f) + line*2.2f, size, RAYWHITE);
+    UiLabel(TextFormat("Paths queued: %d   Path: %.2f ms", PathQueueLength(), PathLastFrameMs()), x, Ui(8.0f) + line*3.2f, size, RAYWHITE);
+    UiLabel(TextFormat("AI gold: %d", EconomyGold(AI_TEAM)), x, Ui(8.0f) + line*4.2f, size, RAYWHITE);
 
-    DrawText("Arrows/MMB: pan  Wheel: zoom  LMB: select  Shift: add  RMB: move / attack / mine gold", 10, GetScreenHeight() - 44, 16, RAYWHITE);
-    DrawText("A+RMB: attack-move  S: stop  H: hold  Base selected - W: train worker  F1: enemy wave", 10, GetScreenHeight() - 24, 16, RAYWHITE);
+    UiLabel(TextFormat("%s: pause menu & controls", UiKeyName(KEY_PAUSE)), x, GetScreenHeight() - Ui(26.0f), Ui(18.0f), RAYWHITE);
 }

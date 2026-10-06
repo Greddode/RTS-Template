@@ -22,6 +22,7 @@
 #include "map.h"
 #include "units.h"
 #include <stdlib.h>
+#include <string.h>
 
 #define NODE_COUNT       (MAP_W * MAP_H)              // one node per tile
 #define HEAP_CAP         (PATH_MAX_EXPANSIONS*8 + 1)  // each expansion pushes at most 8 neighbours
@@ -307,4 +308,12 @@ int PathQueueLength(void)
 double PathLastFrameMs(void)
 {
     return lastFrameMs;
+}
+
+void PathReset(void)
+{
+    memset(status, 0, sizeof(status));   // all PATH_NONE
+    memset(inQueue, 0, sizeof(inQueue));
+    queueHead = queueCount = 0;
+    searching = false;
 }

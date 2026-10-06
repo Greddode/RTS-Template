@@ -9,17 +9,20 @@
 
 #include "map.h"
 #include <math.h>
+#include <string.h>
 
 #define LINE_SAMPLE_STEP (TILE_SIZE / 4.0f)   // smaller = more exact line checks, but slower
 
 static unsigned char tiles[MAP_W * MAP_H];
 static bool          blocked[MAP_W * MAP_H];
+static int           mapWidth = MAP_W, mapHeight = MAP_H;   // this map's real size (<= MAP_W x MAP_H)
 
-static const Color tileColors[TILE_COUNT] = {
-    [TILE_GRASS] = {  70, 120,  60, 255 },
-    [TILE_DIRT]  = { 125, 105,  70, 255 },
-    [TILE_WATER] = {  50,  90, 160, 255 },
-    [TILE_ROCK]  = {  95,  95, 100, 255 },
+const TileInfo TILE_INFO[TILE_COUNT] = {
+    //              name     char  color                      walkable
+    [TILE_GRASS] = { "Grass", '.', {  70, 120,  60, 255 },   true  },
+    [TILE_DIRT]  = { "Dirt",  ',', { 125, 105,  70, 255 },   true  },
+    [TILE_WATER] = { "Water", '~', {  50,  90, 160, 255 },   false },
+    [TILE_ROCK]  = { "Rock",  '#', {  95,  95, 100, 255 },   false },
 };
 
 // Tiny private random generator so map generation doesn't disturb
@@ -47,7 +50,9 @@ static void PaintBlob(int cx, int cy, int radius, TileType type)
 void MapGenerate(unsigned int seed)
 {
     rngState = seed;
-    for (int i = 0; i < MAP_W*MAP_H; i++) tiles[i] = TILE_GRASS;
+    mapWidth = MAP_W;
+    mapHeight = MAP_H;
+    for (int i = 0; i < MAP_W*MAP_H; i++) { tiles[i] = TILE_GRASS; blocked[i] = false; }
 
     for (int i = 0; i < 40; i++) PaintBlob(RandRange(0, MAP_W - 1), RandRange(0, MAP_H - 1), RandRange(2, 6), TILE_DIRT);
     for (int i = 0; i < 14; i++) PaintBlob(RandRange(0, MAP_W - 1), RandRange(0, MAP_H - 1), RandRange(2, 5), TILE_WATER);
@@ -57,16 +62,50 @@ void MapGenerate(unsigned int seed)
     PaintBlob(MAP_W/2, MAP_H/2, 12, TILE_GRASS);
 }
 
+void MapSetTiles(int width, int height, const unsigned char *types)
+{
+    mapWidth = width;
+    mapHeight = height;
+    for (int i = 0; i < MAP_W*MAP_H; i++) { tiles[i] = TILE_ROCK; blocked[i] = false; }
+    for (int y = 0; y < height; y++)
+    {
+        for (int x = 0; x < width; x++) tiles[y*MAP_W + x] = types[y*width + x];
+    }
+}
+
+static unsigned char backupTiles[MAP_W * MAP_H];
+static bool          backupBlocked[MAP_W * MAP_H];
+static int           backupWidth, backupHeight;
+
+void MapBackup(void)
+{
+    memcpy(backupTiles, tiles, sizeof(tiles));
+    memcpy(backupBlocked, blocked, sizeof(blocked));
+    backupWidth = mapWidth;
+    backupHeight = mapHeight;
+}
+
+void MapRestore(void)
+{
+    memcpy(tiles, backupTiles, sizeof(tiles));
+    memcpy(blocked, backupBlocked, sizeof(blocked));
+    mapWidth = backupWidth;
+    mapHeight = backupHeight;
+}
+
+int MapWidth(void)  { return mapWidth; }
+int MapHeight(void) { return mapHeight; }
+
 TileType MapGetTile(int tx, int ty)
 {
-    if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return TILE_ROCK;
+    if (tx < 0 || ty < 0 || tx >= mapWidth || ty >= mapHeight) return TILE_ROCK;
     return (TileType)tiles[ty*MAP_W + tx];
 }
 
 bool MapTileWalkable(int tx, int ty)
 {
     TileType t = MapGetTile(tx, ty);   // out of bounds = rock
-    return (t == TILE_GRASS || t == TILE_DIRT) && !blocked[ty*MAP_W + tx];
+    return TILE_INFO[t].walkable && !blocked[ty*MAP_W + tx];
 }
 
 void MapSetBlocked(int tx, int ty, int w, int h, bool isBlocked)
@@ -115,22 +154,22 @@ void MapDraw(Rectangle view)
 {
     // Grass is the most common tile, so paint the whole map grass in one
     // rectangle and only draw the other tiles on top: far fewer draw calls.
-    DrawRectangle(0, 0, MAP_PIXEL_W, MAP_PIXEL_H, tileColors[TILE_GRASS]);
+    DrawRectangle(0, 0, mapWidth*TILE_SIZE, mapHeight*TILE_SIZE, TILE_INFO[TILE_GRASS].color);
 
     // Only loop over the tiles the camera can see.
     int x0 = (int)floorf(view.x / TILE_SIZE),                y0 = (int)floorf(view.y / TILE_SIZE);
     int x1 = (int)floorf((view.x + view.width) / TILE_SIZE), y1 = (int)floorf((view.y + view.height) / TILE_SIZE);
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
-    if (x1 > MAP_W - 1) x1 = MAP_W - 1;
-    if (y1 > MAP_H - 1) y1 = MAP_H - 1;
+    if (x1 > mapWidth - 1) x1 = mapWidth - 1;
+    if (y1 > mapHeight - 1) y1 = mapHeight - 1;
 
     for (int y = y0; y <= y1; y++)
     {
         for (int x = x0; x <= x1; x++)
         {
             TileType t = (TileType)tiles[y*MAP_W + x];
-            if (t != TILE_GRASS) DrawRectangle(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE, tileColors[t]);
+            if (t != TILE_GRASS) DrawRectangle(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE, TILE_INFO[t].color);
         }
     }
 }

@@ -8,6 +8,7 @@
 
 #include "camera.h"
 #include "map.h"
+#include "ui.h"
 #include "raymath.h"
 
 #define CAM_PAN_SPEED 800.0f   // screen pixels per second
@@ -19,10 +20,15 @@ Camera2D gameCamera;
 
 void CamInit(void)
 {
-    gameCamera.target = (Vector2){ MAP_PIXEL_W/2.0f, MAP_PIXEL_H/2.0f };
+    gameCamera.target = (Vector2){ MapWidth()*TILE_SIZE/2.0f, MapHeight()*TILE_SIZE/2.0f };
     gameCamera.offset = (Vector2){ GetScreenWidth()/2.0f, GetScreenHeight()/2.0f };
     gameCamera.rotation = 0.0f;
     gameCamera.zoom = 1.0f;
+}
+
+void CamLookAt(Vector2 worldPos)
+{
+    gameCamera.target = worldPos;
 }
 
 void CamUpdate(float dt)
@@ -38,8 +44,10 @@ void CamUpdate(float dt)
     if (IsKeyDown(KEY_DOWN))  dir.y += 1;
     gameCamera.target = Vector2Add(gameCamera.target, Vector2Scale(dir, CAM_PAN_SPEED*dt/gameCamera.zoom));
 
+    bool overUi = UiWantsMouse();   // the wheel / drag belong to the UI there
+
     // Middle-mouse drag: the world follows the mouse.
-    if (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE))
+    if (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE) && !overUi)
     {
         gameCamera.target = Vector2Subtract(gameCamera.target, Vector2Scale(GetMouseDelta(), 1.0f/gameCamera.zoom));
     }
@@ -47,7 +55,7 @@ void CamUpdate(float dt)
     // Wheel zoom. Afterwards, shift the camera so the world point under the
     // mouse stays under the mouse (zooming "toward the cursor").
     float wheel = GetMouseWheelMove();
-    if (wheel != 0.0f)
+    if (wheel != 0.0f && !overUi)
     {
         Vector2 before = CamMouseWorld();
         gameCamera.zoom = Clamp(gameCamera.zoom*(1.0f + CAM_ZOOM_STEP*wheel), CAM_ZOOM_MIN, CAM_ZOOM_MAX);
@@ -56,8 +64,8 @@ void CamUpdate(float dt)
     }
 
     // Don't let the screen centre leave the map.
-    gameCamera.target.x = Clamp(gameCamera.target.x, 0.0f, (float)MAP_PIXEL_W);
-    gameCamera.target.y = Clamp(gameCamera.target.y, 0.0f, (float)MAP_PIXEL_H);
+    gameCamera.target.x = Clamp(gameCamera.target.x, 0.0f, (float)(MapWidth()*TILE_SIZE));
+    gameCamera.target.y = Clamp(gameCamera.target.y, 0.0f, (float)(MapHeight()*TILE_SIZE));
 }
 
 Rectangle CamViewRect(void)
