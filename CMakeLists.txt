@@ -36,8 +36,10 @@ target_link_libraries(game PRIVATE raylib m)
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/assets/sprites)
 file(GLOB_RECURSE SPRITE_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/assets/sprites/*)
 if (EMSCRIPTEN)
-    set_target_properties(game PROPERTIES SUFFIX ".html")  # emit game.html + .js + .wasm
-    set_property(TARGET game APPEND PROPERTY LINK_DEPENDS ${CMAKE_SOURCE_DIR}/src/editor/web_download.js ${SPRITE_FILES})   # relink when they change
+    # Emit index.html + index.js / .wasm / .data: itch.io (and most hosts) open index.html.
+    set_target_properties(game PROPERTIES OUTPUT_NAME index SUFFIX ".html")
+    set_property(TARGET game APPEND PROPERTY LINK_DEPENDS ${CMAKE_SOURCE_DIR}/src/editor/web_download.js
+                 ${CMAKE_SOURCE_DIR}/web/shell.html ${SPRITE_FILES})   # relink when they change
     target_link_options(game PRIVATE
         -sUSE_GLFW=3              # raylib's window/input layer, provided by Emscripten
         -sALLOW_MEMORY_GROWTH=1   # let the heap grow (lots of units later)
@@ -46,6 +48,7 @@ if (EMSCRIPTEN)
         "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/maps@/maps"
         "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/sprites@/assets/sprites"
         --js-library ${CMAKE_SOURCE_DIR}/src/editor/web_download.js   # the editor's Save -> browser download
+        "SHELL:--shell-file ${CMAKE_SOURCE_DIR}/web/shell.html"     # our page instead of Emscripten's default one
     )
 else()
     # Copy maps/ next to the executable on every build, even if no code changed,

@@ -12,9 +12,10 @@ An RTS game template in C using [raylib](https://www.raylib.com/). Builds for Li
 ## Build & run
 
 ```sh
-make run     # build and run on desktop    (output: build/game)
-make serve   # build for web and serve it   (open http://localhost:8080/game.html)
-make clean   # delete build folders
+make run      # build and run on desktop    (output: build/game)
+make serve    # build for web and serve it   (open http://localhost:8080/index.html)
+make web-zip  # build for web and zip it for itch.io   (output: build-web/rts-kit-web.zip)
+make clean    # delete build folders
 ```
 
 `make desktop` / `make web` build without running. The real build config is in `CMakeLists.txt`; the Makefile just holds shortcuts.
@@ -58,8 +59,24 @@ screen as `file:line: what's wrong`, and the game plays the Random map instead.
 The same C code runs on desktop and in the browser. The few differences are `#if defined(__EMSCRIPTEN__)`
 blocks: the browser drives the main loop, Exit buttons are hidden, maps and art come from
 `/maps` and `/assets/sprites` (bundled with `--preload-file`), and the editor's Save downloads the file (Load is off).
-`make serve` builds it and serves it at http://localhost:8080/game.html. Opening the `.html`
+`make serve` builds it and serves it at http://localhost:8080/index.html. Opening the `.html`
 file directly doesn't work: browsers won't load the game's files from `file://`.
+
+**The page** is `web/shell.html` (linked with `--shell-file`; edit it to change the title,
+colours or loading screen). Emscripten turns it into `build-web/index.html` next to `index.js`,
+`index.wasm` and `index.data` (the bundled maps and art). It has:
+- a dark background and the game canvas centred, **scaled to fit the window with its aspect
+  ratio kept** (bars on the sides or top/bottom). The game draws at `SCREEN_W` × `SCREEN_H`
+  (1280×720, in `config.h`), so that's its resolution and aspect ratio in the browser. On desktop
+  the window is resizable instead.
+- "Loading..." with a progress bar while the files download, gone when the game starts;
+- no right-click menu on the canvas (right click gives orders), no page scrolling, no text
+  selection, no Emscripten logo or output box. The game's log goes to the browser console (F12).
+
+**Publishing on itch.io:** `make web-zip` makes `build-web/rts-kit-web.zip` with `index.html`,
+`index.js`, `index.wasm` and `index.data` at the top level. On itch.io: *Kind of project* →
+**HTML**, upload the zip, tick **"This file will be played in the browser"**, and set the
+viewport to **1280 × 720** (or tick *Click to launch in fullscreen*: the page scales to any size).
 
 ## Map editor
 
@@ -420,6 +437,7 @@ and `src/editor/` for the editor.
 | `game/mapfile.c` | Map files: `MapDoc` (tiles + objects), parse + full validation with file:line errors, load into the game, write, scan the folder |
 | `editor/editor.c` | Map editor: tile brushes with undo, object tools, save / load / test play |
 | `editor/web_download.js` | Web build only: the editor's Save hands the file to the browser as a download |
+| `web/shell.html` | Web build only: the page around the game (canvas scaling, loading bar, no right-click menu) |
 | `game/sprites.c` | Optional PNG art: scans `assets/sprites`, packs it into one atlas texture (shelf packer), draws units / buildings / tiles from it |
 | `game/camera.c` | Pan / zoom, visible-area queries |
 | `game/units.c` | Unit pool, movement, separation, drawing |

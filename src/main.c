@@ -94,7 +94,11 @@ static void DrawOverlay(void);
 
 int main(void)
 {
+#if !defined(__EMSCRIPTEN__)
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);   // the UI scales with window height
+#endif
+    // Web: the canvas stays SCREEN_W x SCREEN_H and the page (web/shell.html)
+    // scales it to fit the browser window, keeping the aspect ratio.
     InitWindow(SCREEN_W, SCREEN_H, "RTS Kit");
     SetExitKey(KEY_NULL);   // Esc opens the pause menu instead of closing the window
     InspectorCheckHotkeys();   // logs a warning if two hotkeys clash

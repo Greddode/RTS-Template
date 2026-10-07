@@ -88,3 +88,8 @@ build-web/
 
 # Our own JavaScript source (the *.js rule above is for web build output)
 !src/**/*.js
+
+# The web page template (the *.html rule above is for web build output)
+!web/shell.html
+
+/nope

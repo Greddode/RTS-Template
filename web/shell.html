@@ -1,0 +1,85 @@
+<!doctype html>
+<!--
+  shell.html - The web page the game runs in (CMakeLists.txt links it with --shell-file).
+  Emscripten copies this file to index.html and puts the game's <script> where
+  {{{ SCRIPT }}} is.
+
+  - The canvas is drawn at the game's own size (SCREEN_W x SCREEN_H in config.h)
+    and scaled by CSS to fit the window, keeping its aspect ratio (black bars
+    on the sides or top/bottom). Mouse clicks are mapped back to game pixels by
+    Emscripten, so scaling doesn't break clicking.
+  - "Loading..." and a progress bar show while the files download; they go
+    away when the game starts.
+  - Right click opens no browser menu (the game uses it for orders), and the
+    page never scrolls or selects text.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RTS Kit</title>
+<style>
+  html, body {
+    margin: 0; height: 100%;
+    overflow: hidden;                /* no page scroll (arrow keys, wheel) */
+    background: #15181c;
+  }
+  body { display: flex; align-items: center; justify-content: center; }
+  #canvas {
+    display: block;
+    /* Largest box that fits the window with the canvas's aspect ratio. --aspect
+       is set from the canvas size below (16:9 until the game has started). */
+    width:  min(100vw, calc(100vh * var(--aspect, 1.7778)));
+    height: min(100vh, calc(100vw / var(--aspect, 1.7778)));
+    background: #000;
+    outline: none;
+    user-select: none; -webkit-user-select: none;   /* no text selection on drag / double click */
+    touch-action: none;
+  }
+  #loading {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #c8ccd2; font: 16px system-ui, sans-serif;
+    user-select: none; -webkit-user-select: none;
+  }
+  #bar  { width: 240px; height: 6px; margin-top: 12px; background: #2a2f36; border-radius: 3px; overflow: hidden; }
+  #fill { width: 0; height: 100%; background: #d6b84a; transition: width 0.2s; }
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="-1"></canvas>
+<div id="loading"><div id="status">Loading...</div><div id="bar"><div id="fill"></div></div></div>
+
+<script>
+  var canvas = document.getElementById('canvas');
+  var loading = document.getElementById('loading');
+
+  canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });   // right click = game orders
+  canvas.addEventListener('webglcontextlost', function (e) {
+    e.preventDefault();
+    loading.style.display = 'flex';
+    document.getElementById('status').textContent = 'Graphics were reset by the browser - please reload the page.';
+  });
+
+  // Keep the CSS box in the canvas's aspect ratio whenever the game sets its size.
+  function updateAspect() {
+    if (canvas.width > 0 && canvas.height > 0) canvas.style.setProperty('--aspect', canvas.width / canvas.height);
+  }
+  new MutationObserver(updateAspect).observe(canvas, { attributes: true, attributeFilter: ['width', 'height'] });
+
+  var Module = {
+    canvas: canvas,
+    print: function (text) { console.log(text); },       // the game's log goes to the browser console
+    printErr: function (text) { console.warn(text); },
+    // Emscripten reports download progress as "Downloading data... (done/total)",
+    // and an empty text once the game is running.
+    setStatus: function (text) {
+      var m = text.match(/\(([\d.]+)\/(\d+)\)/);
+      if (m) document.getElementById('fill').style.width = (100 * m[1] / m[2]) + '%';
+      if (text === '') { loading.style.display = 'none'; updateAspect(); canvas.focus(); }
+    },
+  };
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>
