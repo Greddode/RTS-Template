@@ -33,6 +33,7 @@ typedef struct Unit {
     bool    attackMove;      // attack-move order: fight enemies met on the way...
     Vector2 attackMoveDest;  // ...then carry on to this spot
     bool    holdPosition;    // hold order: only fight enemies already in range, never chase
+    bool    facingLeft;      // art is drawn mirrored (sprites face right in the PNG)
 
     // Combat (combat.c)
     bool         attacking;

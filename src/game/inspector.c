@@ -129,8 +129,10 @@ static void DrawOneUnit(Rectangle panel, const Unit *u)
     Bar(x, y, Ui(200.0f), u->hp/s->hp, HealthColor(u->hp/s->hp));
     UiLabel(TextFormat("%d / %d", (int)u->hp, (int)s->hp), x + Ui(210.0f), y - Ui(2.0f), Ui(SMALL), RAYWHITE);
     y += Ui(22.0f);
-    UiLabel(TextFormat("Damage %d   Range %d   Speed %d", (int)s->damage, (int)s->range, (int)s->speed), x, y, Ui(SMALL), RAYWHITE);
-    y += Ui(22.0f);
+    UiLabel(TextFormat("Damage %d %s   Range %d   Speed %d", (int)s->damage, DAMAGE_TYPE_NAMES[s->damageType], (int)s->range, (int)s->speed), x, y, Ui(SMALL), RAYWHITE);
+    y += Ui(20.0f);
+    UiLabel(TextFormat("Armor %g %s", s->armor, ARMOR_TYPE_NAMES[s->armorType]), x, y, Ui(SMALL), RAYWHITE);
+    y += Ui(20.0f);
     UiLabel(TextFormat("Order: %s", OrderText(u)), x, y, Ui(SMALL), GOLD);
 }
 

@@ -6,6 +6,9 @@
 //      the builder dies; rebuilt if destroyed). If gold piles up past
 //      AI_EXTRA_BARRACKS_GOLD while every Barracks has a full queue, it builds
 //      another, up to AI_MAX_BARRACKS.
+//   1b. Archery Range: once a Barracks is finished, one worker builds one
+//      Archery Range (rebuilt if destroyed). Combat training waits while
+//      it saves up for it.
 //   2. Workers: each finished drop-off base wants AI_WORKERS_PER_NODE workers
 //      per reachable gold node near it (at most AI_MAX_WORKERS_PER_BASE). The
 //      base that's furthest below its target trains one, if the AI can pay.
@@ -22,7 +25,8 @@
 //   4. Idle units: workers go to the gold node near their base with the
 //      fewest workers on it; combat units attack the nearest player unit (or
 //      building, or march on the player's base).
-// Separately, every AI_TRAIN_TICKS each Barracks with room queues a combat unit.
+// Separately, every AI_TRAIN_TICKS each Barracks with room queues a Melee
+// unit and the Archery Range an Archer. (Knights aren't trained yet.)
 //
 // "Reachable" uses PathRegion(): a flood fill of the walkable tiles, redone
 // every think, so it answers "could pathfinding get there?" instantly.
@@ -44,10 +48,12 @@ static Vector2      playerBase, aiSpawn;
 static int          aiBase;                 // the starting base: slot...
 static unsigned int aiBaseSerial;           // ...and serial
 static int          thinkCountdown, trainCountdown, expandCountdown;
-static int          trainCount;             // alternates melee / ranged
 static int          barracksSlot[AI_MAX_BARRACKS];     // our Barracks: slots...
 static unsigned int barracksSerial[AI_MAX_BARRACKS];   // ...and serials
 static int          barracksCount = 0;
+static int          rangeSlot = -1;         // our Archery Range: slot...
+static unsigned int rangeSerial;            // ...and serial
+static bool         savingForRange = false;
 
 // Expansion in progress (one at a time).
 static bool         expanding = false, savingForExpansion = false;
@@ -60,7 +66,7 @@ static int          failedCount = 0;
 static int  homeRegion;                     // the walkable area our base stands in
 static int  gatherers[MAX_GOLD_NODES];      // our workers mining each node
 static int  workerCount, workerTarget, baseCount;
-static char barracksNote[64], workerNote[64], expandNote[96];
+static char barracksNote[64], rangeNote[64], workerNote[64], expandNote[96];
 
 // Per-think cache: grid cell -> nearest player unit found from it.
 static int          cellTarget[GRID_W*GRID_H];
@@ -162,19 +168,45 @@ static bool AllBarracksFull(void)
     return true;
 }
 
-// Place a Barracks near the anchor base and send one worker to build it.
+// Our workers: how many, whether one is building `site` (-1 = none), and a
+// worker that's free to build something (-1 if none).
+static int ScanBuilders(int site, bool *beingBuilt, int *freeWorker)
+{
+    int workers = 0;
+    *beingBuilt = false;
+    *freeWorker = -1;
+    for (int i = 0; i < MAX_UNITS; i++)
+    {
+        const Unit *u = &units[i];
+        if (!u->active || u->team != AI_TEAM || u->type != UNIT_WORKER) continue;
+        workers++;
+        if (u->buildOrder && site != -1 && u->buildSite == site) *beingBuilt = true;
+        else if (*freeWorker == -1 && !u->buildOrder) *freeWorker = i;
+    }
+    return workers;
+}
+
+// Pay for a building near the anchor base and send one worker to build it.
+// Returns the site, or -1 (no room, or no gold).
+static int StartSite(BuildingType type, int worker, int anchor)
+{
+    int cost = BUILDING_STATS[type].cost;
+    Vector2 spot;
+    if (!BuildingsFindSpot(type, BuildingCentre(anchor), &spot)) return -1;
+    if (!EconomySpend(AI_TEAM, cost)) return -1;
+    int site = BuildingPlace(type, AI_TEAM, spot, true);
+    if (site == -1) { EconomyAdd(AI_TEAM, cost); return -1; }
+    BuildingsOrderConstruct(&worker, 1, site);
+    return site;
+}
+
 static void StartBarracks(int worker, int anchor)
 {
-    int cost = BUILDING_STATS[BUILDING_BARRACKS].cost;
-    Vector2 spot;
-    if (!BuildingsFindSpot(BUILDING_BARRACKS, BuildingCentre(anchor), &spot)) return;
-    if (!EconomySpend(AI_TEAM, cost)) return;
-    int site = BuildingPlace(BUILDING_BARRACKS, AI_TEAM, spot, true);
-    if (site == -1) { EconomyAdd(AI_TEAM, cost); return; }
+    int site = StartSite(BUILDING_BARRACKS, worker, anchor);
+    if (site == -1) return;
     barracksSlot[barracksCount] = site;
     barracksSerial[barracksCount] = buildings[site].serial;
     barracksCount++;
-    BuildingsOrderConstruct(&worker, 1, site);
     Note(barracksNote, sizeof(barracksNote), "Building a Barracks (%d of max %d)", barracksCount, AI_MAX_BARRACKS);
 }
 
@@ -186,16 +218,9 @@ static void BarracksTick(void)
     if (anchor == -1) return;
 
     int site = UnfinishedBarracks();
-    int workers = 0, freeWorker = -1;
-    bool beingBuilt = false;
-    for (int i = 0; i < MAX_UNITS; i++)
-    {
-        const Unit *u = &units[i];
-        if (!u->active || u->team != AI_TEAM || u->type != UNIT_WORKER) continue;
-        workers++;
-        if (u->buildOrder && site != -1 && u->buildSite == site) beingBuilt = true;
-        else if (freeWorker == -1 && !u->buildOrder) freeWorker = i;
-    }
+    bool beingBuilt;
+    int freeWorker;
+    int workers = ScanBuilders(site, &beingBuilt, &freeWorker);
 
     if (site != -1)   // one is being built: make sure somebody is on it
     {
@@ -216,6 +241,49 @@ static void BarracksTick(void)
     {
         StartBarracks(freeWorker, anchor);   // gold is piling up faster than they can spend it
     }
+}
+
+// --- 1b. Archery Range --------------------------------------------------------------
+
+static bool HaveFinishedBarracks(void)
+{
+    for (int k = 0; k < barracksCount; k++) if (!buildings[barracksSlot[k]].constructing) return true;
+    return false;
+}
+
+static void RangeTick(void)
+{
+    rangeNote[0] = '\0';
+    savingForRange = false;
+    bool alive = BuildingIsAlive(rangeSlot, rangeSerial);
+    if (alive && !buildings[rangeSlot].constructing) return;   // have one
+    if (!alive && !HaveFinishedBarracks()) return;              // not yet: the Barracks comes first
+    int anchor = AnchorBase();
+    if (anchor == -1) return;
+
+    bool beingBuilt;
+    int freeWorker;
+    ScanBuilders(alive ? rangeSlot : -1, &beingBuilt, &freeWorker);
+    if (alive)   // being built: make sure somebody is on it
+    {
+        Note(rangeNote, sizeof(rangeNote), "Building an Archery Range (%d%%)", (int)(BuildingBuildProgress(rangeSlot)*100));
+        if (!beingBuilt && freeWorker != -1) BuildingsOrderConstruct(&freeWorker, 1, rangeSlot);
+        return;
+    }
+    if (freeWorker == -1) return;
+
+    int cost = BUILDING_STATS[BUILDING_ARCHERY_RANGE].cost;
+    if (EconomyGold(AI_TEAM) < cost)
+    {
+        savingForRange = true;
+        Note(rangeNote, sizeof(rangeNote), "Saving for an Archery Range (%d/%d)", EconomyGold(AI_TEAM), cost);
+        return;
+    }
+    int site = StartSite(BUILDING_ARCHERY_RANGE, freeWorker, anchor);
+    if (site == -1) return;
+    rangeSlot = site;
+    rangeSerial = buildings[site].serial;
+    Note(rangeNote, sizeof(rangeNote), "Building an Archery Range");
 }
 
 // --- 2. Workers -----------------------------------------------------------------------
@@ -404,18 +472,21 @@ static void ExpandTick(void)
 
 // --- Combat units -----------------------------------------------------------------------
 
+// Queue one unit at a finished building with room. False if out of gold.
+static bool TrainAt(int b, unsigned int serial, UnitType type)
+{
+    if (!BuildingIsAlive(b, serial) || buildings[b].constructing || buildings[b].queueCount >= AI_BARRACKS_QUEUE) return true;
+    return BuildingQueueTrain(b, type);
+}
+
 static void TrainTick(void)
 {
     if (--trainCountdown > 0) return;
     trainCountdown = AI_TRAIN_TICKS;
-    if (savingForExpansion) return;   // gold is going into the next base
+    if (savingForExpansion || savingForRange) return;   // gold is going into a building
+    if (!TrainAt(rangeSlot, rangeSerial, UNIT_ARCHER)) return;   // out of gold
     for (int k = 0; k < barracksCount; k++)   // each Barracks with room gets one unit
-    {
-        int b = barracksSlot[k];
-        if (!BuildingIsAlive(b, barracksSerial[k]) || buildings[b].constructing || buildings[b].queueCount >= AI_BARRACKS_QUEUE) continue;
-        if (!BuildingQueueTrain(b, (trainCount % 2) ? UNIT_RANGED : UNIT_MELEE)) break;   // out of gold
-        trainCount++;
-    }
+        if (!TrainAt(barracksSlot[k], barracksSerial[k], UNIT_MELEE)) return;
 }
 
 static int NearestPlayerUnit(Vector2 from)
@@ -463,12 +534,13 @@ void AiInit(Vector2 base, Vector2 spawn, int baseBuilding)
     thinkCountdown = AI_THINK_TICKS;
     trainCountdown = AI_TRAIN_TICKS;
     expandCountdown = AI_EXPAND_CHECK_TICKS;
-    trainCount = 0;
     barracksCount = 0;
+    rangeSlot = -1;
+    savingForRange = false;
     expanding = savingForExpansion = false;
     failedCount = 0;
     workerCount = workerTarget = baseCount = 0;
-    barracksNote[0] = workerNote[0] = expandNote[0] = '\0';
+    barracksNote[0] = rangeNote[0] = workerNote[0] = expandNote[0] = '\0';
     if (baseBuilding >= 0) RallyTowardNode(baseBuilding);
 }
 
@@ -485,6 +557,7 @@ void AiTick(void)
     baseCount = CountOurBases();
 
     BarracksTick();
+    RangeTick();
     WorkerTick();
     expandCountdown -= AI_THINK_TICKS;
     if (expandCountdown <= 0) { expandCountdown = AI_EXPAND_CHECK_TICKS; ExpandTick(); }
@@ -519,18 +592,20 @@ void AiSpawnWave(int count)
     static Vector2 spots[MAX_UNITS];
     if (count > MAX_UNITS) count = MAX_UNITS;
     int found = UnitsOpenSpots(aiSpawn, count, spots);
-    for (int k = 0; k < found; k++) UnitSpawn(spots[k], (k % 2) ? UNIT_RANGED : UNIT_MELEE, AI_TEAM);
+    for (int k = 0; k < found; k++) UnitSpawn(spots[k], (k % 2) ? UNIT_ARCHER : UNIT_MELEE, AI_TEAM);
 }
 
 const char *AiDebugLine(void)
 {
-    return TextFormat("AI gold %d  workers %d/%d  bases %d  barracks %d", EconomyGold(AI_TEAM), workerCount, workerTarget, baseCount, barracksCount);
+    return TextFormat("AI gold %d  workers %d/%d  bases %d  barracks %d  range %d", EconomyGold(AI_TEAM), workerCount, workerTarget, baseCount, barracksCount,
+                      BuildingIsAlive(rangeSlot, rangeSerial) ? 1 : 0);
 }
 
 const char *AiStatus(void)
 {
     if (expandNote[0]) return expandNote;
     if (barracksNote[0]) return barracksNote;
+    if (rangeNote[0]) return rangeNote;
     if (workerNote[0]) return workerNote;
     return "Training army";
 }

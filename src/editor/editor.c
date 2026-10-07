@@ -327,7 +327,7 @@ static void DrawObjects(void)
         if (o->kind == MAPOBJ_BUILDING)
         {
             float s = (float)BUILDING_STATS[o->type].size*TILE_SIZE;
-            BuildingsDrawShape(o->team, (Rectangle){ (float)o->x*TILE_SIZE, (float)o->y*TILE_SIZE, s, s }, false);
+            BuildingsDrawLook((BuildingType)o->type, o->team, (Rectangle){ (float)o->x*TILE_SIZE, (float)o->y*TILE_SIZE, s, s }, false);
         }
         else if (o->kind == MAPOBJ_GOLD) EconomyDrawNode(c, o->amount);
         else UnitsDrawIcon((UnitType)o->type, o->team, c, UNIT_RADIUS);

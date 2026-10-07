@@ -58,12 +58,14 @@ const char *MapFileError(void)
     return errorText;
 }
 
-static bool SameWord(const char *a, const char *b)   // case-insensitive
+// Case-insensitive, and '_' matches a space: the keyword for "Archery Range"
+// is archery_range (map files are read one word at a time).
+static bool SameWord(const char *a, const char *b)
 {
     while (*a && *b)
     {
-        char ca = (*a >= 'A' && *a <= 'Z') ? *a + 32 : *a;
-        char cb = (*b >= 'A' && *b <= 'Z') ? *b + 32 : *b;
+        char ca = (*a >= 'A' && *a <= 'Z') ? *a + 32 : (*a == ' ') ? '_' : *a;
+        char cb = (*b >= 'A' && *b <= 'Z') ? *b + 32 : (*b == ' ') ? '_' : *b;
         if (ca != cb) return false;
         a++; b++;
     }
@@ -303,7 +305,11 @@ bool MapFileWrite(const char *path, const MapDoc *doc)
         const MapObject *o = &doc->objects[i];
         char word[32];
         snprintf(word, sizeof(word), "%s", ObjectName(o));
-        for (char *c = word; *c; c++) if (*c >= 'A' && *c <= 'Z') *c += 32;   // keywords in lower case
+        for (char *c = word; *c; c++)   // keywords: lower case, spaces as '_'
+        {
+            if (*c >= 'A' && *c <= 'Z') *c += 32;
+            if (*c == ' ') *c = '_';
+        }
         if (o->kind == MAPOBJ_GOLD) fprintf(f, "gold %d %d %d\n", o->x, o->y, o->amount);
         else fprintf(f, "%s %d %d %d\n", word, o->team, o->x, o->y);
     }

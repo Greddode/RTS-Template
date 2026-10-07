@@ -30,14 +30,21 @@ target_compile_options(game PRIVATE -Wall -Wextra)
 set_target_properties(game PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_link_libraries(game PRIVATE raylib m)
 
-# Map files (maps/*.map) ship with the game.
+# Map files (maps/*.map) and sprite art (assets/sprites/*/*.png) ship with the game.
+# The PNGs are listed so that adding or changing art re-bundles the web build.
+# The folder is (re)created if missing, so deleting all art never breaks the build.
+file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/assets/sprites)
+file(GLOB_RECURSE SPRITE_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/assets/sprites/*)
 if (EMSCRIPTEN)
     set_target_properties(game PROPERTIES SUFFIX ".html")  # emit game.html + .js + .wasm
-    set_property(TARGET game APPEND PROPERTY LINK_DEPENDS ${CMAKE_SOURCE_DIR}/src/editor/web_download.js)   # relink when it changes
+    set_property(TARGET game APPEND PROPERTY LINK_DEPENDS ${CMAKE_SOURCE_DIR}/src/editor/web_download.js ${SPRITE_FILES})   # relink when they change
     target_link_options(game PRIVATE
         -sUSE_GLFW=3              # raylib's window/input layer, provided by Emscripten
         -sALLOW_MEMORY_GROWTH=1   # let the heap grow (lots of units later)
-        --preload-file ${CMAKE_SOURCE_DIR}/maps@/maps   # bundle maps/ into the browser's virtual file system
+        # Bundle maps/ and the art into the browser's virtual file system. "SHELL:"
+        # keeps each flag with its folder: CMake drops repeated options otherwise.
+        "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/maps@/maps"
+        "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/sprites@/assets/sprites"
         --js-library ${CMAKE_SOURCE_DIR}/src/editor/web_download.js   # the editor's Save -> browser download
     )
 else()
@@ -46,8 +53,12 @@ else()
     add_custom_target(copy_maps ALL
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/maps ${CMAKE_BINARY_DIR}/maps)   # game is built into the build folder
     add_dependencies(game copy_maps)
+    add_custom_target(copy_sprites ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets/sprites ${CMAKE_BINARY_DIR}/assets/sprites)
+    add_dependencies(game copy_sprites)
     # Builds made from source read and save maps in the project's maps/ folder
     # (so the editor's saves are kept and seen by git). A shipped game, without
     # this folder, uses the copy next to the executable.
-    target_compile_definitions(game PRIVATE MAPS_SOURCE_DIR="${CMAKE_SOURCE_DIR}/maps")
+    target_compile_definitions(game PRIVATE MAPS_SOURCE_DIR="${CMAKE_SOURCE_DIR}/maps"
+                                            SPRITES_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/sprites")   # same idea for art
 endif()

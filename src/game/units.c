@@ -37,6 +37,7 @@
 #include "grid.h"
 #include "map.h"
 #include "path.h"
+#include "sprites.h"
 #include "raymath.h"
 #include <float.h>
 #include <math.h>
@@ -45,7 +46,8 @@
 
 #define PLAYER_COLOR        (Color){ 220, 200, 60, 255 }
 #define AI_COLOR            (Color){ 210, 60, 50, 255 }
-#define RANGED_DOT_COLOR    (Color){ 40, 30, 20, 255 }   // ranged units get a dark centre dot
+#define ARCHER_DOT_COLOR    (Color){ 40, 30, 20, 255 }   // archers get a dark centre dot
+#define KNIGHT_RING_COLOR   (Color){ 40, 30, 20, 255 }   // knights get a dark ring
 #define WORKER_MARK_COLOR   (Color){ 235, 235, 225, 255 } // workers get a light square
 #define UNIT_SELECTED_COLOR (Color){ 60, 255, 90, 255 }
 #define HEALTH_BAR_W        14.0f
@@ -57,6 +59,7 @@
 #define UNIT_ARRIVE_DIST    (TILE_SIZE*0.5f)    // close enough to the target to count as arrived
 #define FORMATION_SPACING   (UNIT_RADIUS*2.5f)  // gap between formation spots
 #define FORMATION_MAX_RINGS 64                  // how far out to look for free spots
+#define FACING_MIN_STEP     0.1f                // sideways step (px per tick) needed to turn around
 
 Unit units[MAX_UNITS];
 static int activeCount = 0;
@@ -248,16 +251,26 @@ void UnitsTick(void)
         else if (u->moving) step = UnitFollowPath(i);
 
         if (!u->active) continue;
+        // Face the way the unit wants to go. Separation pushes are left out, so
+        // a unit jostled in a crowd doesn't flicker left and right.
+        if (step.x < -FACING_MIN_STEP) u->facingLeft = true;
+        if (step.x > FACING_MIN_STEP) u->facingLeft = false;
         step = Vector2Add(step, SeparationPush(i));
         MoveWithTerrain(u, step);
     }
 }
 
-// Body in team colour plus a type mark: ranged = dark dot, worker = light square.
+// Body in team colour plus a type mark: archer = dark dot, worker = light
+// square, knight = dark ring.
+// With art for the type (sprites.c), the art tinted in team colour instead.
 void UnitsDrawIcon(UnitType type, int team, Vector2 p, float radius)
 {
-    DrawCircleSector(p, radius, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, (team == PLAYER_TEAM) ? PLAYER_COLOR : AI_COLOR);
-    if (type == UNIT_RANGED) DrawCircleSector(p, radius*0.4f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, RANGED_DOT_COLOR);
+    Color body = (team == PLAYER_TEAM) ? PLAYER_COLOR : AI_COLOR;
+    if (SpritesHaveUnit(type)) { SpritesDrawUnit(type, p, radius, false, body); return; }
+
+    DrawCircleSector(p, radius, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, body);
+    if (type == UNIT_ARCHER) DrawCircleSector(p, radius*0.4f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, ARCHER_DOT_COLOR);
+    if (type == UNIT_KNIGHT) DrawRing(p, radius*0.45f, radius*0.75f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, KNIGHT_RING_COLOR);
     if (type == UNIT_WORKER)
     {
         float s = radius*0.9f;
@@ -265,36 +278,68 @@ void UnitsDrawIcon(UnitType type, int team, Vector2 p, float radius)
     }
 }
 
+// Carried gold and the health bar (only once the unit has taken damage).
+static void DrawUnitOverlays(const Unit *u, Vector2 p)
+{
+    if (u->carryGold > 0) DrawCircleSector((Vector2){ p.x + u->radius*0.7f, p.y - u->radius*0.7f }, 2.5f, 0.0f, 360.0f, 6, GOLD);
+
+    float maxHp = UNIT_STATS[u->type].hp;
+    if (u->hp < maxHp)
+    {
+        Rectangle bar = { p.x - HEALTH_BAR_W*0.5f, p.y - u->radius - 6.0f, HEALTH_BAR_W, HEALTH_BAR_H };
+        float frac = u->hp/maxHp;
+        DrawRectangleRec(bar, BLACK);
+        DrawRectangleRec((Rectangle){ bar.x, bar.y, bar.width*frac, bar.height }, (frac > 0.5f) ? GREEN : (frac > 0.25f) ? ORANGE : RED);
+    }
+}
+
+// Three passes, so raylib can batch. Shapes use raylib's built-in white
+// texture and art uses the atlas; every switch between the two ends a batch
+// (one more draw call). So: (1) shapes underneath (selection circles, plus
+// units without art drawn complete, exactly as before sprites existed),
+// (2) every sprite in a row, all from the one atlas, (3) the overlays of the
+// units with art on top.
 void UnitsDraw(Rectangle view, float alpha)
 {
     // Ask the grid for units near the screen instead of checking all of them.
     // The margin covers unit size and the small lerp between ticks.
     static int visible[MAX_UNITS];
+    static Vector2 drawPos[MAX_UNITS];
     float margin = UNIT_RADIUS*4.0f;
     Rectangle area = { view.x - margin, view.y - margin, view.width + margin*2.0f, view.height + margin*2.0f };
-    int count = GridQuery(area, visible, MAX_UNITS);
+    int found = GridQuery(area, visible, MAX_UNITS);
 
-    // Everything here is a plain shape (same draw mode, no textures), so
-    // raylib batches all of it into a few draw calls.
-    for (int k = 0; k < count; k++)
+    // Pass 1: drop units hidden by fog, then the shapes.
+    int count = 0;
+    for (int k = 0; k < found; k++)
     {
         const Unit *u = &units[visible[k]];
         if (u->team != PLAYER_TEAM && !FogCanSee(PLAYER_TEAM, u->pos)) continue;   // hidden by fog
         Vector2 p = Vector2Lerp(u->prevPos, u->pos, alpha);
+        visible[count] = visible[k];
+        drawPos[count++] = p;
 
         if (u->selected) DrawCircleSector(p, u->radius + 2.0f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, UNIT_SELECTED_COLOR);
-        UnitsDrawIcon(u->type, u->team, p, u->radius);
-        if (u->carryGold > 0) DrawCircleSector((Vector2){ p.x + u->radius*0.7f, p.y - u->radius*0.7f }, 2.5f, 0.0f, 360.0f, 6, GOLD);
-
-        // Health bar, only once the unit has taken damage.
-        float maxHp = UNIT_STATS[u->type].hp;
-        if (u->hp < maxHp)
+        if (!SpritesHaveUnit(u->type))
         {
-            Rectangle bar = { p.x - HEALTH_BAR_W*0.5f, p.y - u->radius - 6.0f, HEALTH_BAR_W, HEALTH_BAR_H };
-            float frac = u->hp/maxHp;
-            DrawRectangleRec(bar, BLACK);
-            DrawRectangleRec((Rectangle){ bar.x, bar.y, bar.width*frac, bar.height }, (frac > 0.5f) ? GREEN : (frac > 0.25f) ? ORANGE : RED);
+            UnitsDrawIcon(u->type, u->team, p, u->radius);
+            DrawUnitOverlays(u, p);
         }
+    }
+
+    // Pass 2: the art, one batch.
+    for (int k = 0; k < count; k++)
+    {
+        const Unit *u = &units[visible[k]];
+        if (SpritesHaveUnit(u->type))
+            SpritesDrawUnit(u->type, drawPos[k], u->radius, u->facingLeft, (u->team == PLAYER_TEAM) ? PLAYER_COLOR : AI_COLOR);
+    }
+
+    // Pass 3: overlays of the units with art.
+    for (int k = 0; k < count; k++)
+    {
+        const Unit *u = &units[visible[k]];
+        if (SpritesHaveUnit(u->type)) DrawUnitOverlays(u, drawPos[k]);
     }
 }
 

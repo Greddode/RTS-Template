@@ -43,20 +43,21 @@ tiles                     # then exactly <height> rows of <width> characters
 ..,,~~~##...              # . grass   , dirt   ~ water   # rock (read as-is: not a comment here)
 ...
 base 0 8 52               # <building> <team> <x> <y>   x,y = top-left tile; team 0 player, 1 AI
-worker 0 12 51            # <unit> <team> <x> <y>       worker, melee, ranged, ...
+worker 0 12 51            # <unit> <team> <x> <y>       worker, melee, archer, knight, ...
+archery_range 0 20 50     # a space in a name is written _
 gold 5 46 1500            # gold <x> <y> <amount>
 ```
 
-Building and unit keywords are the names in `BUILDING_STATS` / `UNIT_STATS`, so new types work
-in map files automatically. Each team needs at least one building. Mistakes (unknown character,
+Building and unit keywords are the names in `BUILDING_STATS` / `UNIT_STATS` (any case, spaces
+written as `_`: "Archery Range" → `archery_range`), so new types work in map files automatically. Each team needs at least one building. Mistakes (unknown character,
 wrong row length, object on water or outside the map, overlapping buildings, ...) are shown on
 screen as `file:line: what's wrong`, and the game plays the Random map instead.
 
 ## Web build
 
 The same C code runs on desktop and in the browser. The few differences are `#if defined(__EMSCRIPTEN__)`
-blocks: the browser drives the main loop, Exit buttons are hidden, maps come from `/maps`
-(bundled with `--preload-file`), and the editor's Save downloads the file (Load is off).
+blocks: the browser drives the main loop, Exit buttons are hidden, maps and art come from
+`/maps` and `/assets/sprites` (bundled with `--preload-file`), and the editor's Save downloads the file (Load is off).
 `make serve` builds it and serves it at http://localhost:8080/game.html. Opening the `.html`
 file directly doesn't work: browsers won't load the game's files from `file://`.
 
@@ -69,7 +70,7 @@ playing (opens the current map; **Exit** or F2 returns to the paused game exactl
 |---|---|
 | Tile brushes (Grass, Dirt, Water, Rock) | Left-click / drag to paint; brush size 1, 3 or 5. Water and rock never paint under an object. **Ctrl+Z** undoes painting (32 steps) |
 | Player / AI | Which team new objects belong to |
-| Base, Barracks, Worker, Melee, Ranged | Click to place; a green/red ghost shows if it fits (same rules as map files) |
+| Base, Barracks, Archery Range, Melee, Archer, Worker, Knight | Click to place; a green/red ghost shows if it fits (same rules as map files) |
 | Gold + amount | Click to place a gold node with that amount |
 | Erase object | Click (or drag over) objects to remove them |
 | New map 32 / 64 / 128 | Start again, all grass |
@@ -90,6 +91,8 @@ Every 2 seconds the AI:
 
 1. **Barracks:** once it has 3 workers and 150 gold, one worker builds a Barracks near its base.
    If gold piles up past 600 while every Barracks has a full queue, it builds another (up to 3).
+   **Archery Range:** once a Barracks is finished, it builds one Archery Range (rebuilt if
+   destroyed), pausing army training while it saves up for it.
 2. **Workers:** each base aims for **8 workers per reachable gold node** near it (at most **16**),
    training at the base that needs them most. When every base is saturated it stops, and the
    gold goes into the army.
@@ -100,7 +103,8 @@ Every 2 seconds the AI:
    time, at most 3 bases. If the builder dies, the site is cancelled (refunded) and that node
    isn't tried again.
 4. **Army:** idle workers go to the near node with the fewest workers; combat units attack the
-   nearest player unit or building. Every 5 seconds each Barracks with room queues a Melee or Ranged unit.
+   nearest player unit or building. Every 5 seconds each Barracks with room queues a Melee unit
+   and the Archery Range an Archer. It doesn't train Knights yet (army composition comes later).
 
 Every number (thresholds, distances, caps, timings) is a named constant in the **AI tuning**
 block of `config.h`. The debug overlay (top left) shows the AI's gold, workers (have/target),
@@ -125,6 +129,139 @@ fog applied: black = never seen, dimmed = explored. Dots show your units and bui
 you can see right now, enemy buildings you've seen, and gold you've explored. The white outline is
 the camera's view. The terrain/fog picture is a cached texture redrawn only when the map or fog
 changes (at most 5× a second); `MINIMAP_ENABLED` in `config.h` turns it off.
+
+## Art (sprites)
+
+Units, buildings and map tiles can use your own PNGs. Anything without a PNG is drawn as the
+usual coloured shape, so you can replace art one type at a time. Placeholder PNGs are included
+as templates to paint over.
+
+```
+assets/sprites/units/      melee.png  archer.png  worker.png  knight.png   (names from UNIT_STATS)
+assets/sprites/buildings/  base.png   barracks.png  archery_range.png      (names from BUILDING_STATS)
+assets/sprites/tiles/      grass.png  dirt.png  water.png  rock.png  (names from TILE_INFO)
+```
+
+**Naming:** the file name is the type's `name` from the table, in lower case, with spaces
+written as `_` ("Gold Mine" → `gold_mine.png`). A new type added to a table picks up its PNG
+automatically. Upper/lower case in the file name doesn't matter.
+
+**How it's drawn:**
+- **Units** are fitted into the unit's circle (12×12 world pixels by default; 32×32 PNGs are
+  recommended). Draw them **facing right**: they're mirrored when walking left.
+- **Buildings** are fitted into their footprint (Base 96×96, Barracks and Archery Range 64×64 at
+  32 px per tile).
+- Units and buildings keep their PNG's aspect ratio. **Tiles** are stretched to fill one tile
+  (32×32) and should tile seamlessly.
+- Units and buildings are **tinted with the team colour**: the tint multiplies the PNG, so paint
+  team-coloured parts white or grey and keep other parts dark. Tiles aren't tinted.
+- Health bars, selection circles, fog and the minimap don't change (the minimap keeps flat colours).
+
+**Size limits:** at startup all PNGs are packed into one texture (the atlas), at most
+**2048×2048**. So one PNG can be at most 2046×2046 (1 px border on each side), and all of them
+together must fit. Art that doesn't fit falls back to its shape.
+
+**Debugging:** the console (desktop terminal, browser console on the web) has one `SPRITES:`
+line for each type without art, each file that couldn't be read or didn't fit, and each PNG
+whose name matches no type. Then a summary with the atlas size and load time.
+
+**Where the art is read from:** builds made from this source read the project's
+`assets/sprites/` directly, so a new PNG shows up the next time you start the game, no rebuild
+needed. A shipped game reads the copy next to the executable. The web build bundles the folder
+into the page (rebuild after changing art). For crisp pixel art, set `SPRITES_FILTER` to
+`TEXTURE_FILTER_POINT` in `sprites.h`.
+
+## Damage and armor
+
+Every unit deals one **damage type** and wears one **armor type**, and has a flat **armor**
+number. All three are columns in `UNIT_STATS`, and the inspector shows them for a selected unit.
+A hit does
+
+```
+damage = max(base × DAMAGE_MIN_FRACTION,  base × DAMAGE_VS_ARMOR[damageType][armorType] − armor)
+```
+
+so the multiplier is applied first, then the flat armor comes off, and a hit always does at least
+10% of its base damage (`DAMAGE_MIN_FRACTION`). One function, `CombatDamage()` in `combat.c`, does
+this for melee hits and arrows alike. Hits on buildings do the plain base damage.
+
+The counter table in `config.h`, row = attacker's damage type, column = target's armor type:
+
+| | Light | Medium | Heavy |
+|---|---|---|---|
+| **Pierce** | 1.25 | 1.0 | 0.5 |
+| **Blunt** | 1.0 | 1.0 | 1.5 |
+| **Magic** | 1.0 | 1.0 | 1.0 |
+
+| Unit | Damage | Armor | Trained at | Role |
+|---|---|---|---|---|
+| Melee | 12 Blunt | 1 Medium | Barracks (M) | Cheap front line; good vs Knights |
+| Archer | 9 Pierce | 0 Light | Archery Range (C) | Ranged; arrows bounce off Knights (2.5 per hit) |
+| Knight | 18 Blunt | 2 Heavy | Barracks (N) | Slow, tough, expensive; shrugs off arrows, loses to blunt |
+| Worker | 4 Blunt | 0 Light | Base (W) | Mines and builds |
+
+Magic is there as an example: no unit uses it yet.
+
+**Adding an armor type** (e.g. Fortified):
+1. Add `ARMOR_FORTIFIED` to the `ArmorType` enum in `config.h`, before `ARMOR_TYPE_COUNT`.
+2. Add its name to `ARMOR_TYPE_NAMES` (shown in the inspector).
+3. Add a column to **every** row of `DAMAGE_VS_ARMOR` (how much each damage type does to it).
+4. Use it in a unit's `armorType` column.
+
+**Adding a damage type** (e.g. Siege):
+1. Add `DAMAGE_SIEGE` to the `DamageType` enum, before `DAMAGE_TYPE_COUNT`.
+2. Add its name to `DAMAGE_TYPE_NAMES`.
+3. Add a row `[DAMAGE_SIEGE] = { ... }` to `DAMAGE_VS_ARMOR`, one number per armor type.
+4. Use it in a unit's `damageType` column.
+
+A missing column or row isn't a compile error in C. The missing numbers are 0, so that damage
+would always fall to the 10% minimum. Fill in every cell.
+
+## Adding a new unit type (walkthrough)
+
+Example: a **Spearman**, a pierce-damage foot soldier with medium armor, trained at the Barracks.
+
+**1. Add it to the enum** in `src/game/config.h`, before `UNIT_TYPE_COUNT`:
+
+```c
+typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_SPEARMAN, UNIT_TYPE_COUNT } UnitType;
+```
+
+**2. Give it a stats row** in `UNIT_STATS` (same file):
+
+```c
+//                   name        trainedAt          hotkey  hp      damage  damageType     range  cooldown  speed  armor  armorType     cost  trainTime  sight
+[UNIT_SPEARMAN] = { "Spearman", BUILDING_BARRACKS, KEY_P,  100.0f, 10.0f,  DAMAGE_PIERCE, 20.0f, 0.9f,     70.0f, 1.0f,  ARMOR_MEDIUM, 80,   6.0f,      UNIT_SIGHT },
+```
+
+- `name` is used everywhere: inspector, editor button, map files, PNG file name.
+- `trainedAt` puts a Train button on that building (`BUILDING_NONE` = can't be trained).
+- `damageType`, `armor` and `armorType`: see [Damage and armor](#damage-and-armor).
+- Pick an unused hotkey. If two actions share a key, the console says `HOTKEY CONFLICT` at startup.
+
+**3. Add the art:** save a 32×32 PNG, facing right, as `assets/sprites/units/spearman.png`
+(see [Art (sprites)](#art-sprites)). Without it the Spearman is a plain team-coloured circle; to
+give that shape a mark of its own, add a case to `UnitsDrawIcon()` in `units.c`.
+
+**4. Build and run** (`make run`). The console should say `SPRITES: 12 of 12 PNGs packed`. If
+it says `no units/spearman.png`, check the file name.
+
+**5. Optional: put Spearmen in a map.** Add a line to a `.map` file (`<unit> <team> <x> <y>`, in tiles):
+
+```
+spearman 0 13 55
+```
+
+Or place one with the map editor, which now has a **Spearman** button.
+
+**What you get without more code:** the Train button and hotkey on the Barracks, its queue icon,
+the inspector's stats (damage, armor), the Controls page entry, the editor button, map-file
+support, fog sight and the minimap dot. A new **building** works the same way: a row in
+`BUILDING_STATS` gives it a Build button for workers, a hotkey, map-file and editor support.
+
+**What needs code:**
+- Only `UNIT_ARCHER` fires projectiles (`combat.c`). Any other type hits instantly at its `range`.
+- The AI trains Melee at its Barracks and Archers at its Archery Range (`TrainTick()` in `ai.c`).
 
 ## Winning and losing
 
@@ -156,9 +293,10 @@ generated from `CONTROLS` and the key bindings in `config.h`; this table mirrors
 | S | Stop: drop all orders (units still fight enemies that come close) |
 | H | Hold position: stay put, only attack enemies already in range |
 | W (Base selected) | Train a Worker (50); queue up to 5 |
-| M / R (Barracks selected) | Train Melee (75) / Ranged (100); queue up to 5 |
+| M / N (Barracks selected) | Train Melee (75) / Knight (175); queue up to 5 |
+| C (Archery Range selected) | Train an Archer (100); queue up to 5 |
 | Click a queue icon (building selected) | Cancel that unit, gold refunded (destroying the building loses its queue) |
-| B / K (workers selected) | Build a Base (400) / Barracks (150): a ghost follows the mouse, green = OK, red = blocked; left click places, right click / Esc / the key again cancels |
+| B / K / R (workers selected) | Build a Base (400) / Barracks (150) / Archery Range (175): a ghost follows the mouse, green = OK, red = blocked; left click places, right click / Esc / the key again cancels |
 | Esc | Cancel a pending attack-move or building placement; otherwise open the pause menu (Resume, Fog of war on/off, Controls, Main Menu, Exit) |
 | F1 | Debug: spawn a wave of 20 enemies |
 | F2 | Map editor on the current map (F2 / Exit returns to the paused game) |
@@ -172,7 +310,7 @@ Esc never quits the game directly; use Exit in a menu or close the window. (The 
 
 ## Code layout
 
-`maps/` holds the map files. Source is in `src/`: `main.c` (game states) at the top,
+`maps/` holds the map files and `assets/sprites/` the art. Source is in `src/`: `main.c` (game states) at the top,
 `src/game/` for the game and the systems the editor reuses (ui, map, map files, tables),
 and `src/editor/` for the editor.
 
@@ -185,6 +323,7 @@ and `src/editor/` for the editor.
 | `game/mapfile.c` | Map files: `MapDoc` (tiles + objects), parse + full validation with file:line errors, load into the game, write, scan the folder |
 | `editor/editor.c` | Map editor: tile brushes with undo, object tools, save / load / test play |
 | `editor/web_download.js` | Web build only: the editor's Save hands the file to the browser as a download |
+| `game/sprites.c` | Optional PNG art: scans `assets/sprites`, packs it into one atlas texture (shelf packer), draws units / buildings / tiles from it |
 | `game/camera.c` | Pan / zoom, visible-area queries |
 | `game/units.c` | Unit pool, movement, separation, drawing |
 | `game/grid.c` | Spatial grid for nearby-unit queries |
@@ -192,8 +331,8 @@ and `src/editor/` for the editor.
 | `game/input.c` | Selection list (units, building, gold node), orders, hotkeys, building placement ghost |
 | `game/minimap.c` | Minimap: cached terrain/fog texture, unit dots, camera outline, click to move camera / units |
 | `game/fog.c` | Fog of war: per-team visibility grid, recomputed 5× a second, one batched overlay pass |
-| `game/combat.c` | Attacking, chasing, auto-targeting (aggro), projectile pool |
-| `game/ai.c` | Enemy AI: trains workers to a per-node target, builds a Barracks, expands to new gold, trains its army, sends idle units at the player |
+| `game/combat.c` | Attacking, chasing, auto-targeting (aggro), projectile pool, the damage formula (`CombatDamage()`: damage type × armor type, minus armor) |
+| `game/ai.c` | Enemy AI: trains workers to a per-node target, builds a Barracks and an Archery Range, expands to new gold, trains its army, sends idle units at the player |
 | `game/economy.c` | Gold per team, gold node pool, worker mining loop, gold HUD (top right) |
 | `game/buildings.c` | Building pool, tile blocking, placement checks, production queue (cancel/refund), rally points, gold drop-off lookup, construction by workers, drawing |
 | `game/ui.c` | Tiny immediate-mode UI (buttons, panels, labels, tabs, scroll areas), scales with window height, blocks clicks from reaching the game |

@@ -13,9 +13,10 @@
 #
 # Objects (after the tiles), coordinates are tiles, 0,0 = top-left:
 #   base <team> <x> <y>        any building name from BUILDING_STATS
-#   barracks <team> <x> <y>    (x, y = the building's top-left tile)
+#   barracks <team> <x> <y>    (x, y = the building's top-left tile);
+#   archery_range <team> ...   a space in a name is written _
 #   worker <team> <x> <y>      any unit name from UNIT_STATS:
-#   melee <team> <x> <y>       worker, melee, ranged, ...
+#   melee <team> <x> <y>       worker, melee, archer, knight, ...
 #   gold <x> <y> <amount>      a gold node
 #   team 0 = player, team 1 = AI. Each team needs at least one building.
 #

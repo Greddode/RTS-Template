@@ -2,7 +2,7 @@
 //
 // Attack order: the unit chases its target until it's within range (from
 // UNIT_STATS), then hits it every `cooldown` seconds. Melee hits land at once;
-// ranged hits spawn a projectile that flies to the target.
+// archers' hits spawn a projectile that flies to the target.
 //
 // Chasing: a few times a second the unit checks whether the straight line to
 // its target is clear. If so it just walks at the target (no pathfinding).
@@ -30,9 +30,15 @@
 // first; enemy buildings only when no unit is in reach. Workers don't
 // auto-attack.
 //
+// Damage: CombatDamage() turns a hit's base damage into what the target
+// actually loses, using its armor (the damage/armor table in config.h). It
+// runs once, when the attack happens: melee damage lands at once, and a
+// projectile carries the already-reduced number, so "incoming damage" below
+// is exact. Buildings take the plain base damage.
+//
 // Overkill: each unit tracks `incomingDamage`, the damage in projectiles
 // already flying at it. Once that's enough to kill it, the unit is "doomed":
-// nobody fires at it or picks it as a target, so ranged units don't waste
+// nobody fires at it or picks it as a target, so archers don't waste
 // their cooldown on shots that will hit nothing. When a target dies or
 // becomes doomed, the attacker picks the next one on the same tick.
 
@@ -113,6 +119,23 @@ static void DealDamage(bool isBuilding, int target, float damage)
     }
 }
 
+// The one damage formula. See the damage/armor table in config.h.
+float CombatDamage(float base, DamageType type, ArmorType armorType, float armor)
+{
+    float dealt = base*DAMAGE_VS_ARMOR[type][armorType] - armor;
+    float least = base*DAMAGE_MIN_FRACTION;   // armor never blocks a hit completely
+    return (dealt > least) ? dealt : least;
+}
+
+// What one hit from unit u does to its target.
+static float HitDamage(const Unit *u, bool isBuilding, int target)
+{
+    const UnitStats *a = &UNIT_STATS[u->type];
+    if (isBuilding) return a->damage;
+    const UnitStats *t = &UNIT_STATS[units[target].type];
+    return CombatDamage(a->damage, a->damageType, t->armorType, t->armor);
+}
+
 // Attack the nearest enemy worth attacking within `radius`: units first, then
 // buildings. Returns false if there's nothing to attack. An auto-target: the
 // unit's leash (if any) is kept, since the order itself clears it.
@@ -188,8 +211,9 @@ Vector2 CombatUnitTick(int id)
         if (u->moving) UnitStop(id);
         if (u->cooldownTicks == 0)
         {
-            if (u->type == UNIT_RANGED) FireProjectile(u->pos, isBuilding, target, u->attackTargetSerial, stats->damage);
-            else DealDamage(isBuilding, target, stats->damage);
+            float damage = HitDamage(u, isBuilding, target);
+            if (u->type == UNIT_ARCHER) FireProjectile(u->pos, isBuilding, target, u->attackTargetSerial, damage);
+            else DealDamage(isBuilding, target, damage);
             u->cooldownTicks = (int)(stats->cooldown*TICK_RATE);
         }
         return none;
