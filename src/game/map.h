@@ -29,6 +29,7 @@ extern const TileInfo TILE_INFO[TILE_COUNT];
 void     MapGenerate(unsigned int seed);   // same seed = same map (always MAP_W x MAP_H)
 void     MapSetTiles(int width, int height, const unsigned char *types);   // from a map file: types[y*width + x]
 int      MapWidth(void);                   // this map, in tiles
+unsigned MapVersion(void);                // goes up whenever the terrain changes (the minimap redraws then)
 void     MapBackup(void);                  // remember the whole map (tiles, blocked tiles, size)...
 void     MapRestore(void);                 // ...and put it back (the editor uses this to leave a paused game untouched)
 int      MapHeight(void);

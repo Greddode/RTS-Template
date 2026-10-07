@@ -43,6 +43,7 @@
 #include "map.h"
 #include "mapfile.h"
 #include "menu.h"
+#include "minimap.h"
 #include "path.h"
 #include "ui.h"
 #include "units.h"
@@ -206,6 +207,7 @@ static void StartNewGame(const char *mapPath)
 
     GridRebuild();
     FogReset();   // after the map and starting units exist
+    MinimapReset();
     tickAccumulator = 0.0;
     gameTicks = 0;
 }
@@ -346,6 +348,7 @@ static void UpdateDrawFrame(void)
     {
         DrawWorld();
         EconomyDrawHud(PLAYER_TEAM);
+        MinimapDraw();     // clickable: only while playing
         InspectorDraw();   // has the Train/Build buttons: only while playing
         UiDrawMessage();
         DrawOverlay();
@@ -400,5 +403,6 @@ static void DrawOverlay(void)
     UiLabel(AiDebugLine(), x, Ui(8.0f) + line*4.2f, size, RAYWHITE);
     UiLabel(TextFormat("AI: %s", AiStatus()), x, Ui(8.0f) + line*5.2f, size, GOLD);
 
-    UiLabel(TextFormat("%s: pause menu & controls", UiKeyName(KEY_PAUSE)), x, GetScreenHeight() - Ui(26.0f), Ui(18.0f), RAYWHITE);
+    float hintY = MINIMAP_ENABLED ? MinimapRect().y - Ui(24.0f) : GetScreenHeight() - Ui(26.0f);   // above the minimap
+    UiLabel(TextFormat("%s: pause menu & controls", UiKeyName(KEY_PAUSE)), x, hintY, Ui(18.0f), RAYWHITE);
 }

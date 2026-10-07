@@ -250,6 +250,12 @@ static void OrderSelected(Vector2 point)
     else UnitsOrderMove(found, count, point);
 }
 
+void InputMoveSelectedTo(Vector2 worldPos)
+{
+    int count = CollectSelected();
+    UnitsOrderMove(found, count, worldPos);
+}
+
 // --- Building placement ---------------------------------------------------------
 
 static int NearestSelectedWorker(Vector2 to)

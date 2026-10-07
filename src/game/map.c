@@ -16,6 +16,7 @@
 static unsigned char tiles[MAP_W * MAP_H];
 static bool          blocked[MAP_W * MAP_H];
 static int           mapWidth = MAP_W, mapHeight = MAP_H;   // this map's real size (<= MAP_W x MAP_H)
+static unsigned int  version = 1;                         // bumped on every terrain change
 
 const TileInfo TILE_INFO[TILE_COUNT] = {
     //              name     char  color                      walkable
@@ -49,6 +50,7 @@ static void PaintBlob(int cx, int cy, int radius, TileType type)
 
 void MapGenerate(unsigned int seed)
 {
+    version++;
     rngState = seed;
     mapWidth = MAP_W;
     mapHeight = MAP_H;
@@ -64,6 +66,7 @@ void MapGenerate(unsigned int seed)
 
 void MapSetTiles(int width, int height, const unsigned char *types)
 {
+    version++;
     mapWidth = width;
     mapHeight = height;
     for (int i = 0; i < MAP_W*MAP_H; i++) { tiles[i] = TILE_ROCK; blocked[i] = false; }
@@ -87,12 +90,14 @@ void MapBackup(void)
 
 void MapRestore(void)
 {
+    version++;
     memcpy(tiles, backupTiles, sizeof(tiles));
     memcpy(blocked, backupBlocked, sizeof(blocked));
     mapWidth = backupWidth;
     mapHeight = backupHeight;
 }
 
+unsigned MapVersion(void) { return version; }
 int MapWidth(void)  { return mapWidth; }
 int MapHeight(void) { return mapHeight; }
 
@@ -121,6 +126,7 @@ void MapSetBlocked(int tx, int ty, int w, int h, bool isBlocked)
 
 void MapClearArea(Vector2 worldPos, int radiusTiles)
 {
+    version++;
     PaintBlob((int)(worldPos.x/TILE_SIZE), (int)(worldPos.y/TILE_SIZE), radiusTiles, TILE_GRASS);
 }
 

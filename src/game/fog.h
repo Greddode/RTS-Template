@@ -19,5 +19,6 @@ bool     FogCanSee(int team, Vector2 pos); // may `team` see this point now? (fo
 bool     FogCanSeeRect(int team, Rectangle r);   // any part of the area (buildings)
 bool     FogExplored(int team, Vector2 pos);     // seen at some point (gold nodes stay shown)
 double   FogLastUpdateMs(void);            // cost of the last recompute
+unsigned FogVersion(void);                // goes up whenever visibility may have changed (the minimap redraws then)
 
 #endif

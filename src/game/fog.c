@@ -30,6 +30,7 @@ static unsigned char halfWidth[FOG_MAX_SIGHT + 1][FOG_MAX_SIGHT + 1];   // [radi
 static bool          enabled = FOG_OF_WAR_ENABLED;
 static int           countdown = 0;
 static double        lastMs = 0.0;
+static unsigned int  version = 1;   // bumped on every recompute or on/off switch
 
 static bool TeamUsesFog(int team)
 {
@@ -103,6 +104,7 @@ void FogUpdateNow(void)
     double start = GetTime();
     for (int team = 0; team < 2; team++) if (TeamUsesFog(team)) Recompute(team);
     lastMs = (GetTime() - start)*1000.0;
+    version++;
 }
 
 void FogReset(void)
@@ -128,6 +130,7 @@ bool FogEnabled(void)
 void FogSetEnabled(bool on)
 {
     enabled = on;
+    version++;
     if (on) FogUpdateNow();   // the grids may be stale after being off
 }
 
@@ -157,6 +160,11 @@ bool FogCanSeeRect(int team, Rectangle r)
 bool FogExplored(int team, Vector2 pos)
 {
     return FogTileState(team, (int)floorf(pos.x/TILE_SIZE), (int)floorf(pos.y/TILE_SIZE)) != FOG_UNSEEN;
+}
+
+unsigned FogVersion(void)
+{
+    return version;
 }
 
 double FogLastUpdateMs(void)

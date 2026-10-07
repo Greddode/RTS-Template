@@ -23,6 +23,7 @@
 #include "config.h"
 #include "economy.h"
 #include "input.h"
+#include "minimap.h"
 #include "ui.h"
 #include "units.h"
 
@@ -42,12 +43,14 @@
 static float buttonScroll = 0.0f;          // scroll position of the button list
 static unsigned int scrollOwner = 0;       // what it belongs to: reset when the selection changes
 
+// Bottom of the screen, centred in the space right of the minimap.
 static Rectangle Panel(void)
 {
+    float left = MINIMAP_ENABLED ? MinimapRect().x + MinimapRect().width + Ui(10.0f) : Ui(10.0f);
+    float space = GetScreenWidth() - left - Ui(10.0f);
     float w = Ui(PANEL_W);
-    float max = GetScreenWidth() - Ui(20.0f);
-    if (w > max) w = max;
-    return (Rectangle){ (GetScreenWidth() - w)*0.5f, GetScreenHeight() - Ui(PANEL_H) - Ui(40.0f), w, Ui(PANEL_H) };
+    if (w > space) w = space;
+    return (Rectangle){ left + (space - w)*0.5f, GetScreenHeight() - Ui(PANEL_H) - Ui(10.0f), w, Ui(PANEL_H) };
 }
 
 static void Bar(float x, float y, float w, float frac, Color color)

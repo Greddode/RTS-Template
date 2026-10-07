@@ -118,6 +118,14 @@ into it. `AI_SEES_THROUGH_FOG` (default 1) lets the AI ignore fog so it isn't cr
 `FOG_OF_WAR_ENABLED` turns fog off entirely, and the pause menu has a **Fog of war: On/Off**
 button. The map editor never shows fog.
 
+## Minimap
+
+Bottom-left, scaled with the UI. Terrain comes from the tile table (one pixel per tile), with the
+fog applied: black = never seen, dimmed = explored. Dots show your units and buildings, enemies
+you can see right now, enemy buildings you've seen, and gold you've explored. The white outline is
+the camera's view. The terrain/fog picture is a cached texture redrawn only when the map or fog
+changes (at most 5× a second); `MINIMAP_ENABLED` in `config.h` turns it off.
+
 ## Winning and losing
 
 A side with no buildings left (finished or unfinished) loses. The check runs once per second,
@@ -132,6 +140,8 @@ generated from `CONTROLS` and the key bindings in `config.h`; this table mirrors
 | Input | Action |
 |---|---|
 | Arrows / middle-drag | Pan camera |
+| Minimap: left click / drag | Move the camera there |
+| Minimap: right click | Move the selected units there |
 | Mouse wheel | Zoom (over the inspector's buttons: scroll them) |
 | Left click / drag | Select unit / box select |
 | Left click own building | Select it: the inspector shows HP, queue and Train buttons |
@@ -180,6 +190,7 @@ and `src/editor/` for the editor.
 | `game/grid.c` | Spatial grid for nearby-unit queries |
 | `game/path.c` | A* pathfinding: request queue, per-frame time budget, path smoothing; walkable regions ("can I get there?") |
 | `game/input.c` | Selection list (units, building, gold node), orders, hotkeys, building placement ghost |
+| `game/minimap.c` | Minimap: cached terrain/fog texture, unit dots, camera outline, click to move camera / units |
 | `game/fog.c` | Fog of war: per-team visibility grid, recomputed 5× a second, one batched overlay pass |
 | `game/combat.c` | Attacking, chasing, auto-targeting (aggro), projectile pool |
 | `game/ai.c` | Enemy AI: trains workers to a per-node target, builds a Barracks, expands to new gold, trains its army, sends idle units at the player |

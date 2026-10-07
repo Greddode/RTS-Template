@@ -83,6 +83,11 @@ static const UnitStats UNIT_STATS[UNIT_TYPE_COUNT] = {
 #define FOG_MAX_SIGHT       16    // largest sight radius allowed in the tables (tiles)
 #define FOG_EXPLORED_ALPHA  150   // darkness of explored-but-not-visible tiles (0..255); unseen is black
 
+// Minimap (minimap.c).
+#define MINIMAP_ENABLED         1      // 0: no minimap
+#define MINIMAP_SIZE            180.0f // square, in reference pixels (a 720 px tall window), scaled with the UI
+#define MINIMAP_REBUILD_SECONDS 0.2    // its terrain/fog picture is redrawn at most this often (5x per second)
+
 // Game states (main.c switches between them).
 typedef enum { STATE_MENU, STATE_PLAYING, STATE_PAUSED, STATE_VICTORY, STATE_DEFEAT, STATE_EDITOR } GameState;
 
@@ -121,6 +126,8 @@ static const ControlInfo CONTROLS[] = {
     { CONTROLS_MOUSE,    0,                "Right click unfinished", "Workers help build it" },
     { CONTROLS_MOUSE,    0,                "Placing: left / right",  "Place building / cancel" },
     { CONTROLS_MOUSE,    0,                "Middle drag",            "Pan camera" },
+    { CONTROLS_MOUSE,    0,                "Minimap: left / drag",   "Move the camera there" },
+    { CONTROLS_MOUSE,    0,                "Minimap: right click",   "Move selected units there" },
     { CONTROLS_MOUSE,    0,                "Mouse wheel",            "Zoom (over a panel: scroll it)" },
     { CONTROLS_KEYBOARD, 0,                "Arrow keys",             "Pan camera" },
     { CONTROLS_KEYBOARD, KEY_ATTACK_MOVE,  "%s, then right click",   "Attack-move (fight on the way)" },
