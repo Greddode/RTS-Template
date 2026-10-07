@@ -36,6 +36,19 @@
 // projectile carries the already-reduced number, so "incoming damage" below
 // is exact. Buildings take the plain base damage.
 //
+// Splash (Mage): a unit with splashRadius fires a slow bolt at the spot its
+// target stood on when it fired. Whatever is near that spot when the bolt lands
+// gets hit, so a unit that walks away dodges it, and friends nearby get hit
+// too (friendly fire is intended). Damage falls off from the centre to
+// splashFalloff x at the edge, then goes through CombatDamage() per victim.
+// The AI's splash units hold fire while their own units are in the splash.
+//
+// minRange: such a unit never fires at a target closer than that. It picks a
+// target further out, or backs off to the middle of its range band (between
+// minRange and range), so it can't flip between "too close" and "too far".
+//
+// Projectile pool full (rare): the shot is skipped, with one log line.
+//
 // Overkill: each unit tracks `incomingDamage`, the damage in projectiles
 // already flying at it. Once that's enough to kill it, the unit is "doomed":
 // nobody fires at it or picks it as a target, so archers don't waste
@@ -56,6 +69,14 @@
 #define PROJECTILE_SPEED    320.0f               // world px per second
 #define PROJECTILE_RADIUS   2.0f
 #define PROJECTILE_COLOR    (Color){ 255, 240, 200, 255 }
+#define BOLT_SPEED          220.0f               // magic bolts: slow enough to dodge
+#define BOLT_RADIUS         3.0f
+#define BOLT_TRAIL          3                    // trail dots behind a bolt
+#define BOLT_COLOR          (Color){ 150, 120, 255, 255 }
+#define SPLASH_FX_TICKS     9                    // the ring grows for 0.3 s
+#define SPLASH_RING_WIDTH   2.0f
+#define MAX_SPLASH_FX       128
+#define SPLASH_QUERY_MARGIN (UNIT_RADIUS + 8.0f) // grid positions are up to a tick old
 
 typedef struct Projectile {
     bool         active;
@@ -64,10 +85,23 @@ typedef struct Projectile {
     unsigned int targetSerial;
     bool         targetIsBuilding;
     float        damage;
+    bool         bolt;      // magic bolt: flies to `land` and splashes there
+    Vector2      land;      // where its target stood when it was fired
+    UnitType     shooter;   // whose stats the splash uses
 } Projectile;
 
 static Projectile projectiles[MAX_PROJECTILES];
 static int projectileCount = 0;
+static bool poolFullLogged = false;
+
+// Expanding rings where bolts landed (visual only).
+typedef struct SplashFx {
+    bool    active;
+    Vector2 pos;
+    float   radius;
+    int     age;   // ticks
+} SplashFx;
+static SplashFx splashFx[MAX_SPLASH_FX];
 
 // How far a unit looks for new targets: its aggro radius, or only its own
 // attack range when holding position.
@@ -119,6 +153,58 @@ static void DealDamage(bool isBuilding, int target, float damage)
     }
 }
 
+// Where a shot at this target lands: a unit's centre, a building's nearest wall.
+static Vector2 LandingPoint(bool isBuilding, int id, Vector2 from)
+{
+    if (!isBuilding) return units[id].pos;
+    Rectangle r = BuildingRect(id);
+    return (Vector2){ Clamp(from.x, r.x, r.x + r.width), Clamp(from.y, r.y, r.y + r.height) };
+}
+
+// The AI's splash units don't fire while one of their own units is in the splash.
+// (The player's do: friendly fire is the player's call.)
+static bool FriendsInSplash(const Unit *u, Vector2 at)
+{
+    float r = UNIT_STATS[u->type].splashRadius;
+    if (u->team != AI_TEAM || r <= 0.0f) return false;
+    static int near[MAX_UNITS];
+    float q = r + SPLASH_QUERY_MARGIN;
+    int count = GridQuery((Rectangle){ at.x - q, at.y - q, q*2.0f, q*2.0f }, near, MAX_UNITS);
+    for (int k = 0; k < count; k++)
+        if (units[near[k]].team == u->team && Vector2Distance(units[near[k]].pos, at) <= r) return true;
+    return false;
+}
+
+// "Picky" units choose targets themselves: anyone with a minRange, and the
+// AI's splash units (they check for friends). Everyone else takes the nearest enemy.
+static bool Picky(const Unit *u)
+{
+    const UnitStats *s = &UNIT_STATS[u->type];
+    return s->minRange > 0.0f || (s->splashRadius > 0.0f && u->team == AI_TEAM);
+}
+
+// Nearest enemy unit within maxDist that a picky unit may fire at: visible,
+// not doomed, not closer than its minRange, and no friends in the splash.
+static int FindTarget(const Unit *u, float maxDist)
+{
+    static int near[MAX_UNITS];
+    float minRange = UNIT_STATS[u->type].minRange;
+    int count = GridQuery((Rectangle){ u->pos.x - maxDist, u->pos.y - maxDist, maxDist*2.0f, maxDist*2.0f }, near, MAX_UNITS);
+    int best = -1;
+    float bestDist = 0.0f;
+    for (int k = 0; k < count; k++)
+    {
+        const Unit *t = &units[near[k]];
+        if (t->team == u->team || !FogCanSee(u->team, t->pos) || t->hp <= t->incomingDamage) continue;
+        float d = Vector2Distance(u->pos, t->pos);
+        if (d > maxDist || d < minRange || (best != -1 && d >= bestDist)) continue;
+        if (FriendsInSplash(u, t->pos)) continue;
+        best = near[k];
+        bestDist = d;
+    }
+    return best;
+}
+
 // The one damage formula. See the damage/armor table in config.h.
 float CombatDamage(float base, DamageType type, ArmorType armorType, float armor)
 {
@@ -144,8 +230,11 @@ static bool AttackNearest(int id, float radius)
     Unit *u = &units[id];
     bool leashed = u->leashed;
     Vector2 home = u->leashHome;
-    int enemy = GridFindNearestEnemy(u->pos, radius, u->team);
+    bool picky = Picky(u);
+    int enemy = picky ? FindTarget(u, radius) : GridFindNearestEnemy(u->pos, radius, u->team);
     int building = (enemy == -1) ? BuildingsFindNearestEnemy(u->pos, radius, u->team) : -1;
+    if (building != -1 && picky && (BuildingDistance(building, u->pos) < UNIT_STATS[u->type].minRange ||
+                                    FriendsInSplash(u, LandingPoint(true, building, u->pos)))) building = -1;
     if (enemy != -1) UnitsOrderAttack(&id, 1, enemy);
     else if (building != -1) UnitsOrderAttackBuilding(&id, 1, building);
     else return false;
@@ -154,26 +243,93 @@ static bool AttackNearest(int id, float radius)
     return true;
 }
 
-// Fire at a target. Uses a free projectile slot; if the pool is full (very
-// unlikely), the damage lands immediately instead of being lost.
-static void FireProjectile(Vector2 from, bool isBuilding, int target, unsigned int serial, float damage)
+// A free projectile slot, or NULL if the pool is full: the shot is then
+// skipped (logged once, so a too-small MAX_PROJECTILES is easy to spot).
+static Projectile *NewProjectile(void)
 {
     for (int i = 0; i < MAX_PROJECTILES; i++)
+        if (!projectiles[i].active) { projectileCount++; return &projectiles[i]; }
+    if (!poolFullLogged)
     {
-        if (projectiles[i].active) continue;
-        projectiles[i] = (Projectile){
-            .active = true,
-            .pos = from, .prevPos = from,
-            .target = target,
-            .targetSerial = serial,
-            .targetIsBuilding = isBuilding,
-            .damage = damage,
-        };
-        *TargetIncoming(isBuilding, target) += damage;
-        projectileCount++;
-        return;
+        TraceLog(LOG_WARNING, "COMBAT: projectile pool full (MAX_PROJECTILES %d) - shots are skipped until some land", MAX_PROJECTILES);
+        poolFullLogged = true;
     }
-    DealDamage(isBuilding, target, damage);
+    return NULL;
+}
+
+// An arrow: homes in on its target.
+static void FireProjectile(Vector2 from, bool isBuilding, int target, unsigned int serial, float damage)
+{
+    Projectile *p = NewProjectile();
+    if (p == NULL) return;
+    *p = (Projectile){
+        .active = true,
+        .pos = from, .prevPos = from,
+        .target = target,
+        .targetSerial = serial,
+        .targetIsBuilding = isBuilding,
+        .damage = damage,
+    };
+    *TargetIncoming(isBuilding, target) += damage;
+}
+
+// A magic bolt: flies to a fixed spot and splashes there.
+static void FireBolt(const Unit *u, Vector2 land)
+{
+    Projectile *p = NewProjectile();
+    if (p == NULL) return;
+    *p = (Projectile){ .active = true, .pos = u->pos, .prevPos = u->pos, .bolt = true, .land = land, .shooter = u->type };
+}
+
+// A bolt landed: hit every unit (any team) and building within the splash.
+static void Splash(Vector2 at, UnitType shooter)
+{
+    const UnitStats *s = &UNIT_STATS[shooter];
+    float r = s->splashRadius;
+    static int near[MAX_UNITS];
+    float q = r + SPLASH_QUERY_MARGIN;
+    int count = GridQuery((Rectangle){ at.x - q, at.y - q, q*2.0f, q*2.0f }, near, MAX_UNITS);
+    for (int k = 0; k < count; k++)
+    {
+        const Unit *t = &units[near[k]];
+        float d = Vector2Distance(t->pos, at);
+        if (!t->active || d > r) continue;
+        float base = s->damage*(1.0f - (1.0f - s->splashFalloff)*d/r);   // full at the centre, falloff x at the edge
+        DealDamage(false, near[k], CombatDamage(base, s->damageType, UNIT_STATS[t->type].armorType, UNIT_STATS[t->type].armor));
+    }
+    for (int b = 0; b < MAX_BUILDINGS; b++)   // the building pool is small; distance to the nearest wall
+    {
+        if (!buildings[b].active) continue;
+        float d = BuildingDistance(b, at);
+        if (d <= r) DealDamage(true, b, s->damage*(1.0f - (1.0f - s->splashFalloff)*d/r));
+    }
+    for (int i = 0; i < MAX_SPLASH_FX; i++)
+        if (!splashFx[i].active) { splashFx[i] = (SplashFx){ true, at, r, 0 }; break; }
+}
+
+// The target is inside minRange: pick something further out, or back off to
+// the middle of the range band. A holding unit just lets the target go.
+static Vector2 TooClose(int id, bool isBuilding, int target)
+{
+    Unit *u = &units[id];
+    const UnitStats *s = &UNIT_STATS[u->type];
+    Vector2 none = { 0 };
+    if (u->holdPosition) { u->attacking = false; return none; }
+
+    Vector2 from = LandingPoint(isBuilding, target, u->pos);
+    Vector2 away = Vector2Subtract(u->pos, from);
+    away = (Vector2Length(away) > 0.01f) ? Vector2Normalize(away) : (Vector2){ 1.0f, 0.0f };
+    Vector2 spot = Vector2Add(from, Vector2Scale(away, (s->minRange + s->range)*0.5f));
+    if (--u->chaseTicks <= 0)
+    {
+        u->chaseTicks = CHASE_RETHINK_TICKS;
+        if (AttackNearest(id, SearchRadius(u))) return none;   // something it can fire at
+        u->chaseDirect = MapLineClear(u->pos, spot, u->radius);
+        if (u->chaseDirect) { if (u->moving) UnitStop(id); }
+        else UnitMoveTo(id, spot);
+    }
+    if (u->chaseDirect) return UnitStepToward(id, spot);
+    return u->moving ? UnitFollowPath(id) : none;
 }
 
 Vector2 CombatUnitTick(int id)
@@ -206,15 +362,31 @@ Vector2 CombatUnitTick(int id)
     int target = u->attackTarget;
     const UnitStats *stats = &UNIT_STATS[u->type];
 
+    float dist = TargetDistance(isBuilding, target, u->pos);
+    if (dist < stats->minRange) return TooClose(id, isBuilding, target);
+
     // In range: stand still and attack whenever the cooldown allows.
-    if (TargetDistance(isBuilding, target, u->pos) <= stats->range)
+    if (dist <= stats->range)
     {
         if (u->moving) UnitStop(id);
         if (u->cooldownTicks == 0)
         {
-            float damage = HitDamage(u, isBuilding, target);
-            if (u->type == UNIT_ARCHER) FireProjectile(u->pos, isBuilding, target, u->attackTargetSerial, damage);
-            else DealDamage(isBuilding, target, damage);
+            if (stats->splashRadius > 0.0f)
+            {
+                Vector2 land = LandingPoint(isBuilding, target, u->pos);
+                if (FriendsInSplash(u, land))   // AI: own units there; look for a safe target now and then
+                {
+                    if (--u->chaseTicks <= 0) { u->chaseTicks = CHASE_RETHINK_TICKS; AttackNearest(id, SearchRadius(u)); }
+                    return none;
+                }
+                FireBolt(u, land);
+            }
+            else
+            {
+                float damage = HitDamage(u, isBuilding, target);
+                if (u->type == UNIT_ARCHER) FireProjectile(u->pos, isBuilding, target, u->attackTargetSerial, damage);
+                else DealDamage(isBuilding, target, damage);
+            }
             u->cooldownTicks = (int)(stats->cooldown*TICK_RATE);
         }
         return none;
@@ -278,12 +450,27 @@ void CombatAcquireTick(int id)
 // Projectiles home in on their target. If it dies first, they vanish.
 void CombatProjectilesTick(void)
 {
-    float maxStep = PROJECTILE_SPEED*TICK_DT;
+    for (int i = 0; i < MAX_SPLASH_FX; i++)
+        if (splashFx[i].active && ++splashFx[i].age >= SPLASH_FX_TICKS) splashFx[i].active = false;
+
+    float maxStep = PROJECTILE_SPEED*TICK_DT, boltStep = BOLT_SPEED*TICK_DT;
     for (int i = 0; i < MAX_PROJECTILES; i++)
     {
         Projectile *p = &projectiles[i];
         if (!p->active) continue;
         p->prevPos = p->pos;
+
+        if (p->bolt)   // flies to a fixed spot; lands there even if the target has left
+        {
+            Vector2 to = Vector2Subtract(p->land, p->pos);
+            float d = Vector2Length(to);
+            if (d > boltStep) { p->pos = Vector2Add(p->pos, Vector2Scale(to, boltStep/d)); continue; }
+            p->pos = p->land;
+            p->active = false;
+            projectileCount--;
+            Splash(p->land, p->shooter);
+            continue;
+        }
 
         bool hit = false;
         bool targetAlive = TargetAlive(p->targetIsBuilding, p->target, p->targetSerial);
@@ -308,6 +495,8 @@ void CombatProjectilesTick(void)
     }
 }
 
+// Arrows, bolts (with a short trail of dots) and splash rings: all plain
+// circles and rings, so one batch. Only what the camera and the player see.
 void CombatProjectilesDraw(Rectangle view, float alpha)
 {
     for (int i = 0; i < MAX_PROJECTILES; i++)
@@ -317,7 +506,24 @@ void CombatProjectilesDraw(Rectangle view, float alpha)
         Vector2 pos = Vector2Lerp(p->prevPos, p->pos, alpha);
         if (!CheckCollisionPointRec(pos, view)) continue;   // off screen
         if (!FogCanSee(PLAYER_TEAM, pos)) continue;          // hidden by fog
-        DrawCircleSector(pos, PROJECTILE_RADIUS, 0.0f, 360.0f, 6, PROJECTILE_COLOR);
+        if (!p->bolt) { DrawCircleSector(pos, PROJECTILE_RADIUS, 0.0f, 360.0f, 6, PROJECTILE_COLOR); continue; }
+
+        Vector2 back = Vector2Subtract(p->prevPos, p->pos);   // one tick of flight, backwards
+        for (int k = BOLT_TRAIL; k >= 1; k--)
+        {
+            Vector2 dot = Vector2Add(pos, Vector2Scale(back, k*0.5f));
+            DrawCircleSector(dot, BOLT_RADIUS*(1.0f - k*0.2f), 0.0f, 360.0f, 6, Fade(BOLT_COLOR, 0.8f - k*0.2f));
+        }
+        DrawCircleSector(pos, BOLT_RADIUS, 0.0f, 360.0f, 8, BOLT_COLOR);
+    }
+    for (int i = 0; i < MAX_SPLASH_FX; i++)
+    {
+        const SplashFx *f = &splashFx[i];
+        if (!f->active || !CheckCollisionCircleRec(f->pos, f->radius, view)) continue;
+        if (!FogCanSee(PLAYER_TEAM, f->pos)) continue;   // the damage happened anyway; only the picture is hidden
+        float t = (f->age + alpha)/SPLASH_FX_TICKS;
+        float r = f->radius*(0.3f + 0.7f*t);
+        DrawRing(f->pos, r - SPLASH_RING_WIDTH, r, 0.0f, 360.0f, 24, Fade(BOLT_COLOR, 1.0f - t));
     }
 }
 
@@ -329,5 +535,6 @@ int CombatProjectileCount(void)
 void CombatReset(void)
 {
     memset(projectiles, 0, sizeof(projectiles));
+    memset(splashFx, 0, sizeof(splashFx));
     projectileCount = 0;
 }

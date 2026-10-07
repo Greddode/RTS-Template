@@ -138,6 +138,20 @@ static void DrawOneUnit(Rectangle panel, const Unit *u)
     UiLabel(TextFormat("Armor %g %s", s->armor, ARMOR_TYPE_NAMES[s->armorType]), x, y, Ui(SMALL), RAYWHITE);
     y += Ui(20.0f);
     UiLabel(TextFormat("Order: %s", OrderText(u)), x, y, Ui(SMALL), GOLD);
+
+    // Splash / minimum range, from the table, in the right half (units have no buttons there).
+    if (s->splashRadius > 0.0f || s->minRange > 0.0f)
+    {
+        float rx = panel.x + Ui(INFO_W) + Ui(PAD), ry = panel.y + Ui(PAD);
+        SectionTitle(panel, "Splash");
+        if (s->splashRadius > 0.0f)
+        {
+            UiLabel(TextFormat("Radius %d px (hits friends too)", (int)s->splashRadius), rx, ry + Ui(26.0f), Ui(SMALL), RAYWHITE);
+            UiLabel(TextFormat("Edge damage %d%% of the centre", (int)(s->splashFalloff*100.0f + 0.5f)), rx, ry + Ui(46.0f), Ui(SMALL), RAYWHITE);
+        }
+        if (s->minRange > 0.0f)
+            UiLabel(TextFormat("Min range %d px (won't fire closer)", (int)s->minRange), rx, ry + Ui(66.0f), Ui(SMALL), RAYWHITE);
+    }
 }
 
 // --- Several units ------------------------------------------------------------------

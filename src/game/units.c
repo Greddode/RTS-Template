@@ -54,6 +54,7 @@
 #define ARCHER_DOT_COLOR    (Color){ 40, 30, 20, 255 }   // archers get a dark centre dot
 #define KNIGHT_RING_COLOR   (Color){ 40, 30, 20, 255 }   // knights get a dark ring
 #define MEDIC_CROSS_COLOR   (Color){ 245, 245, 240, 255 } // medics get a white cross
+#define MAGE_MARK_COLOR     (Color){ 150, 120, 255, 255 } // mages get a violet diamond
 #define WORKER_MARK_COLOR   (Color){ 235, 235, 225, 255 } // workers get a light square
 #define UNIT_SELECTED_COLOR (Color){ 60, 255, 90, 255 }
 #define HEALTH_BAR_W        14.0f
@@ -273,7 +274,7 @@ void UnitsTick(void)
 }
 
 // Body in team colour plus a type mark: archer = dark dot, worker = light
-// square, knight = dark ring, medic = white cross.
+// square, knight = dark ring, medic = white cross, mage = violet diamond.
 // With art for the type (sprites.c), the art tinted in team colour instead.
 void UnitsDrawIcon(UnitType type, int team, Vector2 p, float radius)
 {
@@ -283,6 +284,7 @@ void UnitsDrawIcon(UnitType type, int team, Vector2 p, float radius)
     DrawCircleSector(p, radius, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, body);
     if (type == UNIT_ARCHER) DrawCircleSector(p, radius*0.4f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, ARCHER_DOT_COLOR);
     if (type == UNIT_KNIGHT) DrawRing(p, radius*0.45f, radius*0.75f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, KNIGHT_RING_COLOR);
+    if (type == UNIT_MAGE) DrawPoly(p, 4, radius*0.6f, 0.0f, MAGE_MARK_COLOR);
     if (type == UNIT_MEDIC)
     {
         float l = radius*1.1f, w = radius*0.4f;
