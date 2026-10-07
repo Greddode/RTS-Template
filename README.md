@@ -72,6 +72,8 @@ colours or loading screen). Emscripten turns it into `build-web/index.html` next
 - "Loading..." with a progress bar while the files download, gone when the game starts;
 - no right-click menu on the canvas (right click gives orders), no page scrolling, no text
   selection, no Emscripten logo or output box. The game's log goes to the browser console (F12).
+- the browser's own function-key actions are blocked (F3 would open "find in page", F1 help),
+  since F1–F3 are game keys. F5 (reload), F11 (fullscreen) and F12 (developer tools) still work.
 
 **Publishing on itch.io:** `make web-zip` makes `build-web/rts-kit-web.zip` with `index.html`,
 `index.js`, `index.wasm` and `index.data` at the top level. On itch.io: *Kind of project* →
@@ -87,7 +89,7 @@ playing (opens the current map; **Exit** or F2 returns to the paused game exactl
 |---|---|
 | Tile brushes (Grass, Dirt, Water, Rock) | Left-click / drag to paint; brush size 1, 3 or 5. Water and rock never paint under an object. **Ctrl+Z** undoes painting (32 steps) |
 | Player / AI | Which team new objects belong to |
-| Base, Barracks, Archery Range, Academy, Melee, Archer, Worker, Knight, Medic, Mage | Click to place; a green/red ghost shows if it fits (same rules as map files) |
+| Base, Barracks, Archery Range, Academy, Melee, Archer, Worker, Knight, Medic, Mage, Scout | Click to place; a green/red ghost shows if it fits (same rules as map files) |
 | Gold + amount | Click to place a gold node with that amount |
 | Erase object | Click (or drag over) objects to remove them |
 | New map 32 / 64 / 128 | Start again, all grass |
@@ -121,12 +123,28 @@ Every 2 seconds the AI:
    isn't tried again.
 4. **Army:** idle workers go to the near node with the fewest workers; combat units attack the
    nearest player unit or building. Every 5 seconds each Barracks with room queues a Melee unit
-   and the Archery Range an Archer. It doesn't build an Academy or train Knights, Medics or Mages yet
+   and the Archery Range an Archer. It doesn't build an Academy or train Knights, Medics, Mages or Scouts yet
    (army composition comes later).
 
 Every number (thresholds, distances, caps, timings) is a named constant in the **AI tuning**
-block of `config.h`. The debug overlay (top left) shows the AI's gold, workers (have/target),
-bases, and what it's currently trying to do.
+block of `config.h`. The debug overlay (**F3**, top left) shows the AI's gold, workers
+(have/target), bases, and what it's currently trying to do.
+
+## Debug overlay (F3)
+
+**F3** shows or hides it on every screen, desktop and web. It's hidden at startup in release
+builds (`make run`, `make web`) and shown in debug builds: `DEBUG_OVERLAY_DEFAULT` in
+`overlay.h`. While playing it shows (top left):
+- FPS now, plus the minimum and average over the last 5 s, and the frame time in ms;
+- sim tick, fog and pathfinding times, paths queued, and what drawing the overlay itself costs;
+- units per team (and of the pool), projectiles, buildings per team;
+- the AI's gold, workers, bases, Barracks / Archery Range and current plan.
+
+In the menus, the pause menu, Victory / Defeat and the editor it's one FPS line, top right. It
+never blocks clicks and stays clear of the gold counter, minimap and inspector. Hidden, it costs
+nothing (one key check a frame). The performance line in the console (`PERF: ...` every 5 s)
+counts frames by itself, so it's correct either way. Draw calls aren't shown: raylib has no
+cheap way to count them.
 
 ## Fog of war
 
@@ -155,7 +173,7 @@ usual coloured shape, so you can replace art one type at a time. Placeholder PNG
 as templates to paint over.
 
 ```
-assets/sprites/units/      melee.png  archer.png  worker.png  knight.png  medic.png  mage.png   (names from UNIT_STATS)
+assets/sprites/units/      melee.png  archer.png  worker.png  knight.png  medic.png  mage.png  scout.png   (names from UNIT_STATS)
 assets/sprites/buildings/  base.png   barracks.png  archery_range.png  academy.png  (names from BUILDING_STATS)
 assets/sprites/tiles/      grass.png  dirt.png  water.png  rock.png  (names from TILE_INFO)
 ```
@@ -217,6 +235,7 @@ The counter table in `config.h`, row = attacker's damage type, column = target's
 | Archer | 9 Pierce | 0 Light | Archery Range (C) | Ranged; arrows bounce off Knights (2.5 per hit) |
 | Knight | 18 Blunt | 2 Heavy | Barracks (N) | Slow, tough, expensive; shrugs off arrows, loses to blunt |
 | Medic | none (heals 8 HP/s) | 0 Light | Academy (D) | Heals damaged allies; see [Buildings that need another, and healers](#buildings-that-need-another-and-healers) |
+| Scout | 4 Pierce, ranged (100) | 0 Light | Archery Range (O) | Fastest unit (110), sees 11 tiles (the most), 35 HP, 60 gold: for spotting, not fighting |
 | Mage | 30 Magic, splash | 0 Light | Academy (G) | Slow, fragile, 200 gold; long range (200), a bolt that splashes everyone near the landing spot; see [Splash and minimum range](#splash-and-minimum-range-mage) |
 | Worker | 4 Blunt | 0 Light | Base (W) | Mines and builds |
 
@@ -308,7 +327,7 @@ Example: a **Spearman**, a pierce-damage foot soldier with medium armor, trained
 **1. Add it to the enum** in `src/game/config.h`, before `UNIT_TYPE_COUNT`:
 
 ```c
-typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UNIT_MAGE, UNIT_SPEARMAN, UNIT_TYPE_COUNT } UnitType;
+typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UNIT_MAGE, UNIT_SCOUT, UNIT_SPEARMAN, UNIT_TYPE_COUNT } UnitType;
 ```
 
 **2. Give it a stats row** in `UNIT_STATS` (same file):
@@ -333,7 +352,7 @@ typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UN
 (see [Art (sprites)](#art-sprites)). Without it the Spearman is a plain team-coloured circle; to
 give that shape a mark of its own, add a case to `UnitsDrawIcon()` in `units.c`.
 
-**4. Build and run** (`make run`). The console should say `SPRITES: 15 of 15 PNGs packed`. If
+**4. Build and run** (`make run`). The console should say `SPRITES: 16 of 16 PNGs packed`. If
 it says `no units/spearman.png`, check the file name.
 
 **5. Optional: put Spearmen in a map.** Add a line to a `.map` file (`<unit> <team> <x> <y>`, in tiles):
@@ -370,8 +389,10 @@ the Priest's Train button (`trainedAt BUILDING_TEMPLE`), a map keyword (`temple`
 button and `temple.png` art, all from the row.
 
 **What needs code:**
-- Arrows: only `UNIT_ARCHER` fires them (`combat.c`). Bolts: any unit with a `splashRadius`. Any
-  other type hits instantly at its `range`.
+- Nothing for ranged units: any unit whose `range` is over 32 px (`ARROW_MIN_RANGE` in
+  `combat.c`) shoots arrows (Archer, Scout), any unit with a `splashRadius` fires bolts, and the
+  rest hit instantly at their `range`.
+- `sight` (tiles it reveals in the fog) can be up to `FOG_MAX_SIGHT` (16, `config.h`).
 - The AI trains Melee at its Barracks and Archers at its Archery Range (`TrainTick()` in `ai.c`).
   It never builds a building or trains a unit it isn't told to, so new rows don't change it.
 
@@ -407,13 +428,14 @@ generated from `CONTROLS` and the key bindings in `config.h`; this table mirrors
 | H | Hold position: stay put, only attack enemies already in range |
 | W (Base selected) | Train a Worker (50); queue up to 5 |
 | M / N (Barracks selected) | Train Melee (75) / Knight (175); queue up to 5 |
-| C (Archery Range selected) | Train an Archer (100); queue up to 5 |
+| C / O (Archery Range selected) | Train an Archer (100) / Scout (60); queue up to 5 |
 | D / G (Academy selected) | Train a Medic (125) / Mage (200); queue up to 5 |
 | Click a queue icon (building selected) | Cancel that unit, gold refunded (destroying the building loses its queue) |
 | B / K / R / E (workers selected) | Build a Base (400) / Barracks (150) / Archery Range (175) / Academy (450, needs a finished Barracks): a ghost follows the mouse, green = OK, red = blocked; left click places, right click / Esc / the key again cancels |
 | Esc | Cancel a pending attack-move or building placement; otherwise open the pause menu (Resume, Fog of war on/off, Controls, Main Menu, Exit) |
 | F1 | Debug: spawn a wave of 20 enemies |
 | F2 | Map editor on the current map (F2 / Exit returns to the paused game) |
+| F3 | Show / hide the debug overlay (any screen) |
 | Ctrl+Z (editor) | Undo tile painting |
 
 **Idle units defend themselves on a leash:** an idle unit attacks enemies that come close, but
@@ -431,13 +453,14 @@ and `src/editor/` for the editor.
 
 | File | System |
 |---|---|
-| `main.c` | Window, game states (menu / playing / paused / victory / defeat / editor), fixed 30 Hz sim loop, new game (map file or Random), win/lose check, editor ↔ game hand-over, debug overlay |
+| `main.c` | Window, game states (menu / playing / paused / victory / defeat / editor), fixed 30 Hz sim loop, new game (map file or Random), win/lose check, editor ↔ game hand-over, performance log |
+| `game/overlay.c` | F3 debug overlay: FPS (now, min / avg), frame / tick / fog / path times, counts per team, AI state; one FPS line outside the game |
 | `game/config.h` | Shared settings: tick rate, teams, unit and building stats tables, game states, key bindings, controls list |
 | `game/map.c` | Tile map: generated "Random" map, real size of the loaded map, walkability (terrain + building-blocked tiles), culled drawing |
 | `game/mapfile.c` | Map files: `MapDoc` (tiles + objects), parse + full validation with file:line errors, load into the game, write, scan the folder |
 | `editor/editor.c` | Map editor: tile brushes with undo, object tools, save / load / test play |
 | `editor/web_download.js` | Web build only: the editor's Save hands the file to the browser as a download |
-| `web/shell.html` | Web build only: the page around the game (canvas scaling, loading bar, no right-click menu) |
+| `web/shell.html` | Web build only: the page around the game (canvas scaling, loading bar, no right-click menu, game keys kept from the browser) |
 | `game/sprites.c` | Optional PNG art: scans `assets/sprites`, packs it into one atlas texture (shelf packer), draws units / buildings / tiles from it |
 | `game/camera.c` | Pan / zoom, visible-area queries |
 | `game/units.c` | Unit pool, movement, separation, drawing |

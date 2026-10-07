@@ -55,6 +55,12 @@
   var loading = document.getElementById('loading');
 
   canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });   // right click = game orders
+  // Function keys are game keys (F1 wave, F2 editor, F3 debug overlay, ...). Without this the
+  // browser acts on them too: F3 opens "find in page", F1 opens help, F7 asks about caret browsing.
+  // F5 (reload), F11 (fullscreen) and F12 (developer tools) stay with the browser.
+  window.addEventListener('keydown', function (e) {
+    if (/^F([1-46-9]|10)$/.test(e.key)) e.preventDefault();
+  }, true);
   canvas.addEventListener('webglcontextlost', function (e) {
     e.preventDefault();
     loading.style.display = 'flex';

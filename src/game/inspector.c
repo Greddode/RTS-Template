@@ -135,7 +135,7 @@ static void DrawOneUnit(Rectangle panel, const Unit *u)
     else
         UiLabel(TextFormat("Damage %d %s   Range %d   Speed %d", (int)s->damage, DAMAGE_TYPE_NAMES[s->damageType], (int)s->range, (int)s->speed), x, y, Ui(SMALL), RAYWHITE);
     y += Ui(20.0f);
-    UiLabel(TextFormat("Armor %g %s", s->armor, ARMOR_TYPE_NAMES[s->armorType]), x, y, Ui(SMALL), RAYWHITE);
+    UiLabel(TextFormat("Armor %g %s   Sight %d tiles", s->armor, ARMOR_TYPE_NAMES[s->armorType], s->sight), x, y, Ui(SMALL), RAYWHITE);
     y += Ui(20.0f);
     UiLabel(TextFormat("Order: %s", OrderText(u)), x, y, Ui(SMALL), GOLD);
 
@@ -330,6 +330,7 @@ void InspectorCheckHotkeys(void)
     keys[n].key = KEY_PAUSE;       keys[n++].what = "pause";
     keys[n].key = KEY_DEBUG_WAVE;  keys[n++].what = "debug wave";
     keys[n].key = KEY_EDITOR;      keys[n++].what = "map editor";
+    keys[n].key = KEY_DEBUG_OVERLAY; keys[n++].what = "debug overlay";
     for (int t = 0; t < UNIT_TYPE_COUNT && n < 64; t++)
     {
         if (UNIT_STATS[t].trainedAt != BUILDING_NONE && UNIT_STATS[t].hotkey) { keys[n].key = UNIT_STATS[t].hotkey; keys[n++].what = UNIT_STATS[t].name; }

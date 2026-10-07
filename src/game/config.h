@@ -78,7 +78,7 @@ static const float DAMAGE_VS_ARMOR[DAMAGE_TYPE_COUNT][ARMOR_TYPE_COUNT] = {
 // UnitsDrawIcon(). `trainedAt` puts a Train button on that building;
 // BUILDING_NONE means it can't be trained. Columns a unit doesn't use stay 0
 // (healing, splash, minRange): 0 means "off".
-typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UNIT_MAGE, UNIT_TYPE_COUNT } UnitType;
+typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UNIT_MAGE, UNIT_SCOUT, UNIT_TYPE_COUNT } UnitType;
 
 typedef struct UnitStats {
     const char  *name;
@@ -111,6 +111,7 @@ static const UnitStats UNIT_STATS[UNIT_TYPE_COUNT] = {
     [UNIT_KNIGHT] = { "Knight", BUILDING_BARRACKS,      KEY_N,  300.0f, 18.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     55.0f, 2.0f,  ARMOR_HEAVY,  175,  10.0f,     UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f  },
     [UNIT_MEDIC]  = { "Medic",  BUILDING_ACADEMY,       KEY_D,   60.0f,  0.0f,  DAMAGE_PIERCE,   0.0f, 0.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  125,  8.0f,      UNIT_SIGHT, true,    8.0f,     64.0f,     0.0f,   0.0f,    0.0f  },
     [UNIT_MAGE]   = { "Mage",   BUILDING_ACADEMY,       KEY_G,   50.0f, 30.0f,  DAMAGE_MAGIC,  200.0f, 2.5f,     50.0f, 0.0f,  ARMOR_LIGHT,  200,  12.0f,     UNIT_SIGHT, false,   0.0f,     0.0f,      48.0f,  0.3f,    72.0f },
+    [UNIT_SCOUT]  = { "Scout",  BUILDING_ARCHERY_RANGE, KEY_O,   35.0f,  4.0f,  DAMAGE_PIERCE, 100.0f, 1.0f,    110.0f, 0.0f,  ARMOR_LIGHT,  60,   5.0f,      11,         false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f  },
 };
 
 // Auto-targeting leash: an idle unit that starts chasing an enemy on its own
@@ -141,6 +142,7 @@ typedef enum { STATE_MENU, STATE_PLAYING, STATE_PAUSED, STATE_VICTORY, STATE_DEF
 #define KEY_PAUSE         KEY_ESCAPE
 #define KEY_DEBUG_WAVE    KEY_F1
 #define KEY_EDITOR        KEY_F2    // while playing: open the map editor on the current map
+#define KEY_DEBUG_OVERLAY KEY_F3    // show / hide the debug overlay (default: DEBUG_OVERLAY_DEFAULT in overlay.h)
 #define KEY_UNDO          KEY_Z     // with Ctrl, in the editor
 
 // Every control, for the in-game Controls screen. If `key` isn't 0, "%s" in
@@ -178,6 +180,7 @@ static const ControlInfo CONTROLS[] = {
     { CONTROLS_KEYBOARD, KEY_PAUSE,        "%s",                     "Cancel placing/attack-move, or pause" },
     { CONTROLS_KEYBOARD, KEY_DEBUG_WAVE,   "%s",                     "Debug: spawn an enemy wave" },
     { CONTROLS_KEYBOARD, KEY_EDITOR,       "%s",                     "Map editor on the current map" },
+    { CONTROLS_KEYBOARD, KEY_DEBUG_OVERLAY,"%s",                     "Debug overlay (FPS, timings, counts)" },
     { CONTROLS_KEYBOARD, KEY_UNDO,         "Ctrl + %s (editor)",     "Undo tile painting" },
 };
 #define CONTROLS_COUNT ((int)(sizeof(CONTROLS)/sizeof(CONTROLS[0])))

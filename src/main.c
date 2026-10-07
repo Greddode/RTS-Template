@@ -45,6 +45,7 @@
 #include "mapfile.h"
 #include "menu.h"
 #include "minimap.h"
+#include "overlay.h"
 #include "path.h"
 #include "sprites.h"
 #include "ui.h"
@@ -90,7 +91,7 @@ static Camera2D savedCamera;           // the game's camera while the editor bor
 static void SetupStart(Vector2 playerBase, Vector2 aiBase);
 static void StartNewGame(const char *mapPath);
 static void UpdateDrawFrame(void);
-static void DrawOverlay(void);
+static void DrawHint(void);
 
 int main(void)
 {
@@ -333,6 +334,7 @@ static void DrawWorld(void)
 static void UpdateDrawFrame(void)
 {
     UiBegin();
+    OverlayUpdate();   // F3, in every screen
     GameState frameState = state;   // changes made below take effect next frame
 
     if (frameState == STATE_PLAYING) UpdatePlaying();
@@ -360,7 +362,8 @@ static void UpdateDrawFrame(void)
         MinimapDraw();     // clickable: only while playing
         InspectorDraw();   // has the Train/Build buttons: only while playing
         UiDrawMessage();
-        DrawOverlay();
+        DrawHint();
+        OverlayDrawFull(lastTickMs);
     }
     else if (frameState == STATE_VICTORY || frameState == STATE_DEFEAT)
     {
@@ -382,6 +385,7 @@ static void UpdateDrawFrame(void)
         if (action == MENU_EXIT) quitRequested = true;
     }
 
+    if (frameState != STATE_PLAYING) OverlayDrawFpsLine();   // menus, pause, game over, editor
     EndDrawing();
 
 #if defined(__EMSCRIPTEN__)
@@ -389,7 +393,7 @@ static void UpdateDrawFrame(void)
 #endif
 
     // Count frames ourselves: raylib's GetFPS() only samples when it's called,
-    // and in the menu nothing else calls it, so it would report nonsense.
+    // and with the F3 overlay hidden nothing else calls it, so it would report nonsense.
     perfFrames++;
     if (GetTime() >= nextPerfLog)
     {
@@ -401,17 +405,9 @@ static void UpdateDrawFrame(void)
     }
 }
 
-static void DrawOverlay(void)
+// Bottom left, above the minimap: how to reach the pause menu (always shown while playing).
+static void DrawHint(void)
 {
-    float x = Ui(10.0f), size = Ui(16.0f), line = Ui(20.0f);
-    UiPanel((Rectangle){ 0, 0, Ui(420.0f), Ui(140.0f) });
-    UiLabel(TextFormat("%d FPS", GetFPS()), x, Ui(8.0f), Ui(20.0f), LIME);
-    UiLabel(TextFormat("Units: %d   Projectiles: %d", UnitsActiveCount(), CombatProjectileCount()), x, Ui(8.0f) + line*1.2f, size, RAYWHITE);
-    UiLabel(TextFormat("Sim tick: %.2f ms   Fog: %.2f ms", lastTickMs, FogLastUpdateMs()), x, Ui(8.0f) + line*2.2f, size, RAYWHITE);
-    UiLabel(TextFormat("Paths queued: %d   Path: %.2f ms", PathQueueLength(), PathLastFrameMs()), x, Ui(8.0f) + line*3.2f, size, RAYWHITE);
-    UiLabel(AiDebugLine(), x, Ui(8.0f) + line*4.2f, size, RAYWHITE);
-    UiLabel(TextFormat("AI: %s", AiStatus()), x, Ui(8.0f) + line*5.2f, size, GOLD);
-
-    float hintY = MINIMAP_ENABLED ? MinimapRect().y - Ui(24.0f) : GetScreenHeight() - Ui(26.0f);   // above the minimap
-    UiLabel(TextFormat("%s: pause menu & controls", UiKeyName(KEY_PAUSE)), x, hintY, Ui(18.0f), RAYWHITE);
+    float hintY = MINIMAP_ENABLED ? MinimapRect().y - Ui(24.0f) : GetScreenHeight() - Ui(26.0f);
+    UiLabel(TextFormat("%s: pause menu & controls", UiKeyName(KEY_PAUSE)), Ui(10.0f), hintY, Ui(18.0f), RAYWHITE);
 }

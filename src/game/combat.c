@@ -2,7 +2,8 @@
 //
 // Attack order: the unit chases its target until it's within range (from
 // UNIT_STATS), then hits it every `cooldown` seconds. Melee hits land at once;
-// archers' hits spawn a projectile that flies to the target.
+// ranged units' hits (reach over ARROW_MIN_RANGE: Archer, Scout) spawn an
+// arrow that flies to the target.
 //
 // Chasing: a few times a second the unit checks whether the straight line to
 // its target is clear. If so it just walks at the target (no pathfinding).
@@ -66,6 +67,7 @@
 #include <string.h>
 
 #define CHASE_RETHINK_TICKS 10                   // how often a chasing unit re-plans (3x per second)
+#define ARROW_MIN_RANGE     32.0f                // units that reach further than this shoot arrows (Archer, Scout)
 #define PROJECTILE_SPEED    320.0f               // world px per second
 #define PROJECTILE_RADIUS   2.0f
 #define PROJECTILE_COLOR    (Color){ 255, 240, 200, 255 }
@@ -384,7 +386,7 @@ Vector2 CombatUnitTick(int id)
             else
             {
                 float damage = HitDamage(u, isBuilding, target);
-                if (u->type == UNIT_ARCHER) FireProjectile(u->pos, isBuilding, target, u->attackTargetSerial, damage);
+                if (stats->range > ARROW_MIN_RANGE) FireProjectile(u->pos, isBuilding, target, u->attackTargetSerial, damage);
                 else DealDamage(isBuilding, target, damage);
             }
             u->cooldownTicks = (int)(stats->cooldown*TICK_RATE);
