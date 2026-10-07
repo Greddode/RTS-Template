@@ -15,7 +15,6 @@
 #define OVERLAY_REFRESH     0.25   // the unit / building counts are recounted this often (seconds)
 
 void OverlayUpdate(void);   // once per frame: F3 toggles; gathers stats only while shown
-bool OverlayVisible(void);
 void OverlayDrawFull(double tickMs);   // while playing: everything (does nothing when hidden)
 void OverlayDrawFpsLine(void);         // menus, pause, editor: one FPS line (does nothing when hidden)
 

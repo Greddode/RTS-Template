@@ -1,24 +1,77 @@
-# RTS
+# RTS Kit
 
-An RTS game template in C using [raylib](https://www.raylib.com/). Builds for Linux desktop and the web.
+A small, complete real-time strategy game in plain **C99 + [raylib](https://www.raylib.com/)**,
+made to be read, changed and extended. It runs on **Linux desktop and in the browser**
+(WebAssembly), and it's built to run smoothly on a 4 GB Celeron laptop.
 
-## Requirements
+**What you get:** workers that mine gold and construct buildings, 7 unit types (Melee, Archer,
+Knight, Worker, Medic, Mage, Scout) with armor and damage types, splash damage and healers,
+4 production buildings with prerequisites, a computer opponent that builds, expands and attacks,
+fog of war, a minimap, A* pathfinding with a per-frame time budget, a map editor with
+test play, swappable PNG art (placeholders included), a debug overlay (F3), and a web build
+ready to upload to itch.io. Units, buildings, tiles and damage types are rows in tables in
+`config.h`: most new content needs no other code.
 
-- CMake 3.24+
-- Desktop: raylib (`sudo pacman -S raylib`)
-- Web: Emscripten (`sudo pacman -S emscripten`, then open a new terminal). The first web build
-  downloads and compiles raylib, so it takes a minute.
+Version **1.0.0** (`GAME_VERSION` in `config.h`, shown on the main menu). Licences of the
+libraries used: [THIRD_PARTY.md](THIRD_PARTY.md). Release checklist: [PLAYTEST.md](PLAYTEST.md).
 
-## Build & run
+## Screenshots
+
+Suggested shots for a store page (on desktop, raylib saves the window to `screenshot000.png`
+when you press **F12**):
+
+1. A big fight on River Crossing: Knights, Archers and Mages with splash rings and heal lines.
+2. A base with all four buildings, workers mining, the inspector showing a building's queue.
+3. Fog of war and the minimap: explored terrain dimmed, enemy buildings remembered.
+4. The map editor painting a map, then Test Play.
+5. The F3 debug overlay over a 700-unit battle (shows it runs at 60 FPS).
+6. The same scene with art deleted: coloured shapes (shows the art is swappable).
+7. The web build in a browser tab.
+
+## Quick start
+
+**1. Install the tools** (Linux; Windows and macOS aren't tested, see [Known limitations](#known-limitations)):
+
+| Distro | Command |
+|---|---|
+| Arch | `sudo pacman -S base-devel cmake raylib python` |
+| Ubuntu / Debian | `sudo apt install build-essential cmake git python3 libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev` |
+| Fedora | `sudo dnf install gcc make cmake git python3 libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel mesa-libGL-devel` |
+
+You need CMake 3.24+. **raylib is optional:** if raylib 6.0 or newer isn't installed (Ubuntu's
+and Fedora's packages are older), the first build downloads and compiles it (needs internet,
+about a minute and a half on the Celeron). The X11 / GL packages above are what that needs.
+(Only the Arch line was tested; the others are the usual package names for raylib's needs.)
+
+For the **web build**, also install **Emscripten**: `sudo pacman -S emscripten` on Arch (then open
+a new terminal), or anywhere with the official SDK: <https://emscripten.org/docs/getting_started/downloads.html>
+(`./emsdk install latest && ./emsdk activate latest && source ./emsdk_env.sh`).
+
+**2. Build and run:**
 
 ```sh
-make run      # build and run on desktop    (output: build/game)
-make serve    # build for web and serve it   (open http://localhost:8080/index.html)
-make web-zip  # build for web and zip it for itch.io   (output: build-web/rts-kit-web.zip)
-make clean    # delete build folders
+make run       # build and run on desktop    (output: build/game)
+make serve     # build for web and serve it   (open http://localhost:8080/index.html)
+make web-zip   # build for web and zip it for itch.io   (output: build-web/rts-kit-web.zip)
+make release   # clean builds of both + the web zip and a source zip in dist/
+make clean     # delete build folders
 ```
 
-`make desktop` / `make web` build without running. The real build config is in `CMakeLists.txt`; the Makefile just holds shortcuts.
+`make desktop` / `make web` build without running. The real build config is in `CMakeLists.txt`;
+the Makefile just holds shortcuts. The first web build compiles raylib, so it takes a minute or two.
+In a game, **Esc** opens the pause menu and the **Controls** page; F3 shows the debug overlay.
+
+**Where to change things:**
+
+| I want to... | Section |
+|---|---|
+| add a unit | [Adding a new unit type](#adding-a-new-unit-type-walkthrough) |
+| add a building (or a prerequisite) | [the Temple example](#adding-a-new-unit-type-walkthrough) in the same section |
+| make a map | [Maps](#maps), [Map editor](#map-editor) |
+| replace the art | [Art (sprites)](#art-sprites) |
+| add an armor or damage type | [Damage and armor](#damage-and-armor) |
+| tune the AI | [Computer opponent (AI)](#computer-opponent-ai): every number is a named constant in `config.h` |
+| change keys | `KEY_...` defines and the `CONTROLS` table in `config.h` |
 
 ## Maps
 
@@ -27,8 +80,9 @@ The list is built by scanning the folder, so a new map needs no code change. On 
 build copies `maps/` next to the game (`make run` re-copies it each time); the web build bundles
 it into the page.
 
-Included: `arena.map` (32×32 combat test), `duel.map` (64×64 1v1), `river.map` (128×128, a
-river with three bridges).
+Included: `arena.map` (32×32 combat test: two armies, no economy), `duel.map` (64×64 1v1),
+`river.map` (128×128, a river with three bridges), and `new_map_64x64.map` (64×64, two bases
+and gold, made in the editor).
 
 ### Map file format
 
@@ -477,3 +531,76 @@ and `src/editor/` for the editor.
 | `game/ui.c` | Tiny immediate-mode UI (buttons, panels, labels, tabs, scroll areas), scales with window height, blocks clicks from reaching the game |
 | `game/menu.c` | Main menu, map picker, pause menu, Controls page, Victory / Defeat screen |
 | `game/inspector.c` | Bottom panel for the selection; Train / Build buttons generated from the stats tables; hotkey clash check |
+
+## Performance
+
+Measured for version 1.0.0 on the target hardware: **Intel Celeron N4120** (4 cores, 1.1 GHz
+base), **4 GB RAM** (3.6 GB usable), integrated graphics, Arch Linux. Release build, 1280×720.
+Scenario: River Crossing, 100 workers mining plus a 300 vs 300 battle (Melee, Archers, Knights
+and 30 Scouts; 732 units in all).
+
+| | Desktop (60 FPS cap) | Desktop (uncapped) | Web (Firefox) |
+|---|---|---|---|
+| FPS, 100 workers + 300 vs 300 | 60 (min 60) | 390 avg (min 355) | 59 (min 59) |
+| FPS, full unit pool (2,046 units) | 59 (min 58) | 293 avg (min 259) | not measured |
+| Sim tick (30 per second), battle | 1.1–1.7 ms avg, 4.8 ms worst | | |
+| Sim tick, 2,046 units | 5–8 ms avg, 20 ms worst | | |
+| Fog of war update (5 per second) | 0.14–0.23 ms avg, 0.38 ms worst (battle); 0.70 ms worst (2,046 units) | | |
+| Peak memory | 51 MB | | |
+| Startup: packing the art atlas | 2–4 ms | | 10–40 ms |
+| Download size | | | 207 KB zip (wasm 405 KB, js 180 KB, maps + art 36 KB) |
+
+Limits are fixed pools, set in headers: 2,048 units (`MAX_UNITS`), 64 buildings
+(`MAX_BUILDINGS`), 64 gold nodes, 1,024 projectiles, maps up to 128×128 tiles. Other apps
+running on the same machine lower the uncapped numbers a lot. Press F3 to see the live numbers.
+
+## Known limitations
+
+- **No multiplayer** (no network or hot-seat play) and **no saving or loading a game** in progress.
+- **One computer opponent** (team 1), in 1 vs 1 games only.
+- **The AI only trains Workers, Melee and Archers**, and only builds Bases, Barracks and an
+  Archery Range. It never makes Knights, Medics, Mages or Scouts, or an Academy, and has
+  one fixed plan (no difficulty levels). By default it sees through the fog (`AI_SEES_THROUGH_FOG`).
+- **Balance is rough.** In equal-gold fights Melee beats every other type, and in AI vs AI games
+  the map's second side won 4 of 5 maps. On the **Random** map the player starts with 20 soldiers
+  and the AI with none, which makes it easy. See [Balance (measured)](#balance-measured) below.
+- **Destroyed buildings you can't see simply disappear.** Remembered enemy buildings stay on the
+  map until you look again, but one destroyed out of sight vanishes instead of leaving a "ghost".
+  Units under fog aren't remembered at all.
+- **No sound or music.** **Placeholder art only** (simple shapes).
+- **No control groups** (Ctrl+1–9), no shift-queued orders, no formations beyond a grid of spots.
+- **Linux and web only.** The code is plain C99 + raylib and should port, but Windows and macOS
+  builds aren't tested or set up. Only Firefox was tested for the web build.
+- **The web build draws at 1280×720** and scales that to the browser window (slightly soft on big
+  screens). The editor's **Load** is off in the browser (Save downloads the file).
+- Maps and art are read at startup; changing them needs a restart (the web build needs a rebuild).
+
+### Balance (measured)
+
+Equal-gold fights (1,500 gold each, two groups walking into each other):
+
+| | Result |
+|---|---|
+| Melee vs Archer / Knight / Mage / Scout | Melee wins every time (keeps 95% / 85% / 45% / 100% of its value) |
+| Knight vs Archer | Knight wins, loses nothing |
+| Mage vs Archer | Mage wins, keeps 86% |
+| Knight vs Mage | Knight wins, keeps 62% |
+
+AI vs AI (the same AI on both sides, fog off) ends in 4–10 minutes. Change the numbers in
+`UNIT_STATS` (`config.h`); every number above can be re-measured after a change.
+
+## Releasing
+
+`make release` deletes the build folders, builds the desktop and web versions from scratch, and
+puts two zips in `dist/`:
+
+- `rts-kit-<version>-web.zip`: `index.html`, `index.js`, `index.wasm`, `index.data` at the top
+  level, ready to upload to itch.io (HTML project, "This file will be played in the browser",
+  viewport 1280 × 720).
+- `rts-kit-<version>-source.zip`: the source, `README.md`, `LICENSE`, `THIRD_PARTY.md`,
+  `PLAYTEST.md`, `assets/` and `maps/`, in one `rts-kit-<version>/` folder.
+
+For 1.0.0: web zip 207 KB, source zip 149 KB; about 1.5 minutes on the Celeron (the web build
+compiles raylib from scratch).
+
+The version comes from `GAME_VERSION` in `config.h`. Go through [PLAYTEST.md](PLAYTEST.md) first.

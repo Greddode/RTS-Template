@@ -20,6 +20,7 @@
 #include "combat.h"
 #include "config.h"
 #include "fog.h"
+#include "minimap.h"
 #include "path.h"
 #include "ui.h"
 #include "units.h"
@@ -74,11 +75,6 @@ void OverlayUpdate(void)
     }
 }
 
-bool OverlayVisible(void)
-{
-    return visible;
-}
-
 static const char *MinAvgText(void)
 {
     if (samples == 0) return "min/avg: wait 1 s";
@@ -98,7 +94,7 @@ void OverlayDrawFull(double tickMs)
     y += line*1.3f;
     UiLabel(TextFormat("Frame %.2f ms   Sim tick %.2f ms   Fog %.2f ms", GetFrameTime()*1000.0f, tickMs, FogLastUpdateMs()), x, y, size, RAYWHITE);
     y += line;
-    UiLabel(TextFormat("Path %.2f ms   Paths queued %d   Overlay %.2f ms", PathLastFrameMs(), PathQueueLength(), lastDrawMs), x, y, size, RAYWHITE);
+    UiLabel(TextFormat("Path %.2f ms (queued %d)   Minimap %.2f ms   Overlay %.2f ms", PathLastFrameMs(), PathQueueLength(), MinimapLastRebuildMs(), lastDrawMs), x, y, size, RAYWHITE);
     y += line;
     UiLabel(TextFormat("Units: you %d, AI %d (%d of %d)   Projectiles %d", teamUnits[PLAYER_TEAM], teamUnits[AI_TEAM], UnitsActiveCount(), MAX_UNITS, CombatProjectileCount()), x, y, size, RAYWHITE);
     y += line;

@@ -14,17 +14,32 @@ run: desktop
 # Browsers refuse to load .wasm from file://, so serve it over local HTTP.
 serve: web
 	@echo "Open http://localhost:8080/index.html"
-	python -m http.server 8080 -d build-web
+	python3 -m http.server 8080 -d build-web
 
 # The web build as one zip, index.html at the top level: upload it to itch.io as-is.
 # (Python's zip module, so no extra tool is needed; it stores each file under its own name.)
 WEB_FILES = build-web/index.html build-web/index.js build-web/index.wasm build-web/index.data
 web-zip: web
 	rm -f build-web/rts-kit-web.zip
-	python -m zipfile -c build-web/rts-kit-web.zip $(WEB_FILES)
+	python3 -m zipfile -c build-web/rts-kit-web.zip $(WEB_FILES)
 	@echo "Made build-web/rts-kit-web.zip"
 
-clean:
-	rm -rf build build-web
+# Release: clean builds of both versions, then the web zip and a source zip in dist/.
+VERSION := $(shell sed -n 's/^\#define GAME_VERSION "\(.*\)"/\1/p' src/game/config.h)
+RELEASE  = rts-kit-$(VERSION)
+SOURCE_FILES = README.md LICENSE THIRD_PARTY.md PLAYTEST.md Makefile CMakeLists.txt .gitignore src web assets maps
+release:
+	rm -rf build build-web dist
+	$(MAKE) desktop
+	$(MAKE) web-zip
+	mkdir -p dist/$(RELEASE)
+	cp build-web/rts-kit-web.zip dist/$(RELEASE)-web.zip
+	cp -r $(SOURCE_FILES) dist/$(RELEASE)/
+	cd dist && python3 -m zipfile -c $(RELEASE)-source.zip $(RELEASE)
+	rm -rf dist/$(RELEASE)
+	@echo "Release $(VERSION):"; ls -l dist
 
-.PHONY: desktop web run serve web-zip clean
+clean:
+	rm -rf build build-web dist
+
+.PHONY: desktop web run serve web-zip release clean

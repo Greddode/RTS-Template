@@ -18,6 +18,12 @@ else()
                          FIND_PACKAGE_ARGS 6.0)
 endif()
 FetchContent_MakeAvailable(raylib)
+# When raylib is compiled from source (downloaded), hide warnings from its own
+# code and bundled libraries: they aren't ours to fix. Our code keeps -Wall -Wextra.
+get_target_property(RAYLIB_IMPORTED raylib IMPORTED)
+if (NOT RAYLIB_IMPORTED)
+    target_compile_options(raylib PRIVATE -w)
+endif()
 
 # --- game --------------------------------------------------------------------
 # Every .c file under src/ (main.c, game/, editor/) is built; new files are picked up automatically.

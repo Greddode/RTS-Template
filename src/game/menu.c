@@ -178,6 +178,7 @@ MenuAction MenuMain(void)
     b = NextButton(b);
     if (UiButton(b, "Exit", 0)) return MENU_EXIT;
 #endif
+    UiLabel("Version " GAME_VERSION, Ui(10.0f), GetScreenHeight() - Ui(26.0f), Ui(16.0f), GRAY);   // bottom left
     return MENU_NONE;
 }
 

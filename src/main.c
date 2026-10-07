@@ -1,4 +1,4 @@
-// main.c - Window, game states, game loop and debug overlay.
+// main.c - Window, game states, game loop and performance log.
 //
 // Game states (config.h): MENU -> Play (pick a map) -> PLAYING <-> PAUSED (Esc),
 // and PLAYING -> VICTORY / DEFEAT when one side has no buildings left.

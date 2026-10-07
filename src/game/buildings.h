@@ -1,4 +1,4 @@
-// buildings.h - Building pool: bases (and future building types).
+// buildings.h - Building pool: placement, prerequisites, production, construction.
 #ifndef BUILDINGS_H_INCLUDED
 #define BUILDINGS_H_INCLUDED
 

@@ -76,8 +76,6 @@ android.*
 *.wasm
 *.html
 *.js
-!src/minshell.html
-!src/shell.html
 
 # Build output
 build/
@@ -93,3 +91,5 @@ build-web/
 !web/shell.html
 
 /nope
+# make release output
+dist/
