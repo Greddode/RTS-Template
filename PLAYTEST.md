@@ -31,7 +31,7 @@ tiles, ...) were run when each feature was added.
 - [x] Pause (Esc), Fog of war button, Controls page, Resume *(scripted)*
 - [x] Pause → Main Menu *(scripted)*
 - [x] Victory screen and Defeat screen, Play Again, Main Menu *(scripted)*
-- [x] All maps: Random, Test Arena, Duel, River Crossing, New map 64x64 *(scripted)*
+- [x] All maps: Random, Dire Straight, River Crossing *(scripted)*
 - [x] F1 debug wave, F3 overlay on/off *(scripted)*
 - [ ] A full game against the AI by hand, start to finish (is it fun, is it clear what to do?)
 - [ ] Desktop window resize (the UI should scale with the window height)

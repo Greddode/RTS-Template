@@ -1,4 +1,4 @@
-# Made with the RTS Kit map editor. The file format is described in duel.map.
+# Made with the RTS Kit map editor. The file format is described in maps/FORMAT.md.
 
 name River Crossing (128x128)
 width 128

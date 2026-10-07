@@ -41,7 +41,8 @@ when you press **F12**):
 You need CMake 3.24+. **raylib is optional:** if raylib 6.0 or newer isn't installed (Ubuntu's
 and Fedora's packages are older), the first build downloads and compiles it (needs internet,
 about a minute and a half on the Celeron). The X11 / GL packages above are what that needs.
-(Only the Arch line was tested; the others are the usual package names for raylib's needs.)
+(The Ubuntu line is built automatically on GitHub, see [Automatic builds](#automatic-builds).
+The Fedora line uses the usual package names for raylib's needs and isn't tested.)
 
 For the **web build**, also install **Emscripten**: `sudo pacman -S emscripten` on Arch (then open
 a new terminal), or anywhere with the official SDK: <https://emscripten.org/docs/getting_started/downloads.html>
@@ -80,14 +81,14 @@ The list is built by scanning the folder, so a new map needs no code change. On 
 build copies `maps/` next to the game (`make run` re-copies it each time); the web build bundles
 it into the page.
 
-Included: `arena.map` (32×32 combat test: two armies, no economy), `duel.map` (64×64 1v1),
-`river.map` (128×128, a river with three bridges), and `new_map_64x64.map` (64×64, two bases
-and gold, made in the editor).
+Included: `dire_straight_64x64.map` ("Dire Straight", 64×64) and `river_crossing_128x128.map`
+("River Crossing", 128×128), both made with the map editor. **The full file format, the rules a
+map must follow and tips for fair maps are in [`maps/FORMAT.md`](maps/FORMAT.md).**
 
 ### Map file format
 
-Plain text, one character per tile, so it's easy to edit and to diff. The full description is
-in a comment block at the top of `maps/duel.map`.
+Plain text, one character per tile, so it's easy to edit and to diff. In short (the full guide
+is [`maps/FORMAT.md`](maps/FORMAT.md)):
 
 ```
 # comment (outside the tile grid)
@@ -100,7 +101,7 @@ tiles                     # then exactly <height> rows of <width> characters
 base 0 8 52               # <building> <team> <x> <y>   x,y = top-left tile; team 0 player, 1 AI
 worker 0 12 51            # <unit> <team> <x> <y>       worker, melee, archer, knight, ...
 archery_range 0 20 50     # a space in a name is written _
-gold 5 46 1500            # gold <x> <y> <amount>
+gold 5 46 1500            # gold <x> <y> <amount>   (gold has no team: anyone can mine it)
 ```
 
 Building and unit keywords are the names in `BUILDING_STATS` / `UNIT_STATS` (any case, spaces
@@ -605,6 +606,17 @@ AI vs AI (the same AI on both sides, fog off, starting soldiers removed) ends in
 and both sides train all seven unit types on every map with an economy. Which side wins depends
 on the map: side 0 won 4 of 5. Against a player who does nothing, the AI wins in 1–4 minutes. Change the numbers in
 `UNIT_STATS` (`config.h`); every number above can be re-measured after a change.
+
+## Automatic builds
+
+`.github/workflows/build.yml` makes GitHub build the kit every time you push (the **Actions**
+tab of the repository; the builds are attached to each run):
+
+| Job | What it checks |
+|---|---|
+| Linux (`ubuntu:24.04`, `ubuntu:22.04`) | a clean Ubuntu with only the README's packages: `make desktop`, then the game runs 10 s on a virtual screen |
+| Web | `make web-zip` with the latest Emscripten |
+| Windows (Visual Studio), Windows (MinGW), macOS | **not supported yet**: these show what would need porting |
 
 ## Releasing
 

@@ -1,6 +1,6 @@
 // mapfile.c - Plain-text map files.
 //
-// The format is described at the top of maps/duel.map. In short:
+// The format is described in maps/FORMAT.md. In short:
 //   name <text>            width <n>            height <n>
 //   tiles                  then exactly <height> rows of <width> characters,
 //                          one per tile, from TILE_INFO in map.h:
@@ -292,7 +292,7 @@ bool MapFileWrite(const char *path, const MapDoc *doc)
     FILE *f = fopen(path, "w");
     if (!f) return Fail(path, 0, "can't write the file");
 
-    fprintf(f, "# Made with the RTS Kit map editor. The file format is described in duel.map.\n\n");
+    fprintf(f, "# Made with the RTS Kit map editor. The file format is described in maps/FORMAT.md.\n\n");
     fprintf(f, "name %s\nwidth %d\nheight %d\ntiles\n", doc->name, doc->width, doc->height);
     for (int y = 0; y < doc->height; y++)
     {
