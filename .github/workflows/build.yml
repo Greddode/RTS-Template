@@ -54,16 +54,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Set up CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.28.x'
       - name: Set up Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 'latest'   # or pin a version you tested, e.g. 3.1.74
+          version: 'latest'
       - name: Check tools
         run: |
-          emcc --version
-          emcmake cmake --version
+          which cmake emcc emcmake python3
           cmake --version
-          python3 --version
+          emcc --version
       - name: Build web
         run: make web-zip
       - uses: actions/upload-artifact@v4
