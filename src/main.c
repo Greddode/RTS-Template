@@ -274,7 +274,7 @@ static void CheckGameOver(void)
 // Input, pathfinding and the fixed sim ticks. Only runs while PLAYING.
 static void UpdatePlaying(void)
 {
-    // Esc cancels a pending attack-move / building placement first; otherwise it pauses.
+    // KEY_PAUSE (Esc; Ctrl on web) cancels a pending attack-move / building placement first; otherwise it pauses.
     if (IsKeyPressed(KEY_PAUSE) && !InputHasPendingCommand())
     {
         state = STATE_PAUSED;

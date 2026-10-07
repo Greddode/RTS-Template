@@ -60,7 +60,7 @@ make clean     # delete build folders
 
 `make desktop` / `make web` build without running. The real build config is in `CMakeLists.txt`;
 the Makefile just holds shortcuts. The first web build compiles raylib, so it takes a minute or two.
-In a game, **Esc** opens the pause menu and the **Controls** page; F3 shows the debug overlay.
+In a game, **Esc** (**Ctrl** in the web build) opens the pause menu and the **Controls** page; F3 shows the debug overlay.
 
 **Where to change things:**
 
@@ -511,7 +511,7 @@ generated from `CONTROLS` and the key bindings in `config.h`; this table mirrors
 | D / G (Academy selected) | Train a Medic (125) / Mage (200); queue up to 5 |
 | Click a queue icon (building selected) | Cancel that unit, gold refunded (destroying the building loses its queue) |
 | B / K / R / E (workers selected) | Build a Base (400) / Barracks (150) / Archery Range (175) / Academy (450, needs a finished Barracks): a ghost follows the mouse, green = OK, red = blocked; left click places, right click / Esc / the key again cancels |
-| Esc | Cancel a pending attack-move or building placement; otherwise open the pause menu (Resume, Fog of war on/off, Controls, Main Menu, Exit) |
+| Esc (web: Ctrl) | Cancel a pending attack-move or building placement; otherwise open the pause menu (Resume, Fog of war on/off, Controls, Main Menu, Exit). The web build uses Left Ctrl because browsers use Esc to leave fullscreen; change it with `KEY_PAUSE` in `config.h` |
 | F1 | Debug: spawn a wave of 20 enemies |
 | F2 | Map editor on the current map (F2 / Exit returns to the paused game) |
 | F3 | Show / hide the debug overlay (any screen) |

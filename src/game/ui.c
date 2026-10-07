@@ -150,6 +150,7 @@ const char *UiKeyName(int key)
     switch (key)
     {
         case KEY_ESCAPE: return "Esc";
+        case KEY_LEFT_CONTROL: return "Ctrl";
         case KEY_SPACE:  return "Space";
         case KEY_ENTER:  return "Enter";
         case KEY_TAB:    return "Tab";

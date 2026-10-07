@@ -142,7 +142,11 @@ typedef enum { STATE_MENU, STATE_PLAYING, STATE_PAUSED, STATE_VICTORY, STATE_DEF
 #define KEY_ATTACK_MOVE   KEY_A
 #define KEY_STOP          KEY_S
 #define KEY_HOLD          KEY_H
+#if defined(__EMSCRIPTEN__)
+#define KEY_PAUSE         KEY_LEFT_CONTROL   // web: browsers use Esc to leave fullscreen, so pause is on Ctrl
+#else
 #define KEY_PAUSE         KEY_ESCAPE
+#endif
 #define KEY_DEBUG_WAVE    KEY_F1
 #define KEY_EDITOR        KEY_F2    // while playing: open the map editor on the current map
 #define KEY_DEBUG_OVERLAY KEY_F3    // show / hide the debug overlay (default: DEBUG_OVERLAY_DEFAULT in overlay.h)

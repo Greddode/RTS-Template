@@ -90,6 +90,8 @@ build-web/
 # The web page template (the *.html rule above is for web build output)
 !web/shell.html
 
-/nope
+tools/
+nope/
+marketing/
 # make release output
 dist/
