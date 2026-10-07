@@ -28,8 +28,10 @@
 
 #include "buildings.h"
 #include "economy.h"
+#include "fog.h"
 #include "grid.h"
 #include "map.h"
+#include "sprites.h"
 #include "units.h"
 #include "raymath.h"
 #include <string.h>
@@ -79,7 +81,30 @@ Vector2 BuildingApproachPoint(int id, Vector2 from, float radius)
     Vector2 out = Vector2Subtract(wall, BuildingCentre(id));
     out = Vector2Scale(Vector2Normalize(out), radius + 2.0f);
     Vector2 spot = Vector2Add(wall, out);
-    UnitsOpenSpots(spot, 1, &spot);
+    if (MapCircleWalkable(spot, radius)) return spot;
+
+    // Blocked (e.g. the corner touches a neighbouring building): walk round the
+    // building just outside its walls and take the open spot nearest to `from`.
+    // Every spot on that ring is close enough to the wall to build or drop off.
+    Rectangle r = BuildingRect(id);
+    float gap = radius + 2.0f, step = TILE_SIZE*0.25f;
+    Rectangle ring = { r.x - gap, r.y - gap, r.width + 2.0f*gap, r.height + 2.0f*gap };
+    bool found = false;
+    float bestDist = 0.0f;
+    for (float t = 0.0f; t <= ring.width + ring.height; t += step)
+    {
+        // t runs along the top and right edges; each point is mirrored onto the opposite edge.
+        Vector2 p = (t <= ring.width) ? (Vector2){ ring.x + t, ring.y } : (Vector2){ ring.x + ring.width, ring.y + (t - ring.width) };
+        Vector2 q = { 2.0f*ring.x + ring.width - p.x, 2.0f*ring.y + ring.height - p.y };
+        Vector2 cand[2] = { p, q };
+        for (int k = 0; k < 2; k++)
+        {
+            if (!MapCircleWalkable(cand[k], radius)) continue;
+            float d = Vector2Distance(cand[k], from);
+            if (!found || d < bestDist) { found = true; bestDist = d; spot = cand[k]; }
+        }
+    }
+    if (!found) UnitsOpenSpots(spot, 1, &spot);   // boxed in all round: nearest open ground
     return spot;
 }
 
@@ -107,6 +132,7 @@ int BuildingsFindNearestEnemy(Vector2 pos, float maxDist, int team)
         const Building *b = &buildings[i];
         if (!b->active || b->team == team) continue;
         if (b->hp <= b->incomingDamage) continue;   // doomed: don't waste attacks
+        if (!FogCanSeeRect(team, BuildingRect(i))) continue;   // hidden by fog
         float d = BuildingDistance(i, pos);
         if (d <= bestDist) { bestDist = d; best = i; }
     }
@@ -188,6 +214,22 @@ Rectangle BuildingFootprint(BuildingType type, Vector2 centre)
     int tx, ty, size = BUILDING_STATS[type].size;
     FootprintTiles(type, centre, &tx, &ty);
     return (Rectangle){ (float)(tx*TILE_SIZE), (float)(ty*TILE_SIZE), (float)(size*TILE_SIZE), (float)(size*TILE_SIZE) };
+}
+
+// Prerequisites: a type with `requires` can be started only while the team
+// owns at least one FINISHED building of that type. Checked when a worker
+// (player or AI) starts one, not when map files or the editor place it.
+// Losing the required building later only stops new ones; existing ones keep working.
+bool BuildingsCanBuild(int team, BuildingType type)
+{
+    BuildingType need = BUILDING_STATS[type].requires;
+    if (need == BUILDING_NONE) return true;
+    for (int i = 0; i < MAX_BUILDINGS; i++)
+    {
+        const Building *b = &buildings[i];
+        if (b->active && b->team == team && b->type == need && !b->constructing) return true;
+    }
+    return false;
 }
 
 bool BuildingCanPlace(BuildingType type, Vector2 centre)
@@ -354,46 +396,73 @@ void BuildingsTick(void)
     }
 }
 
-void BuildingsDrawShape(int team, Rectangle r, bool unfinished)
+// A building's body: its art tinted in team colour (sprites.c), or else a
+// team-coloured square with a darker roof. Unfinished ones are see-through.
+void BuildingsDrawLook(BuildingType type, int team, Rectangle r, bool unfinished)
 {
     Color body = (team == PLAYER_TEAM) ? PLAYER_BASE_COLOR : AI_BASE_COLOR;
     if (unfinished) body = Fade(body, UNFINISHED_ALPHA);   // unfinished: see-through
+    if (SpritesHaveBuilding(type)) { SpritesDrawBuilding(type, r, body); return; }
     DrawRectangleRec(r, body);
     DrawRectangleRec((Rectangle){ r.x + 10, r.y + 10, r.width - 20, r.height - 20 }, ROOF_COLOR);
 }
 
+// Construction, health and production bars.
+static void DrawBuildingBars(int id, Rectangle r)
+{
+    const Building *b = &buildings[id];
+
+    // Construction progress along the bottom edge.
+    if (b->constructing)
+    {
+        DrawRectangleRec((Rectangle){ r.x, r.y + r.height - 6.0f, r.width, 6.0f }, Fade(BLACK, 0.6f));
+        DrawRectangleRec((Rectangle){ r.x, r.y + r.height - 6.0f, r.width*BuildingBuildProgress(id), 6.0f }, ORANGE);
+    }
+
+    float maxHp = BUILDING_STATS[b->type].hp;
+    if (b->hp < maxHp)
+    {
+        Rectangle bar = { r.x, r.y - HEALTH_BAR_H - 3.0f, r.width, HEALTH_BAR_H };
+        float frac = b->hp/maxHp;
+        DrawRectangleRec(bar, BLACK);
+        DrawRectangleRec((Rectangle){ bar.x, bar.y, bar.width*frac, bar.height }, (frac > 0.5f) ? GREEN : (frac > 0.25f) ? ORANGE : RED);
+    }
+
+    // Production progress along the bottom edge.
+    if (b->queueCount > 0)
+    {
+        float frac = b->trainTicks/(UNIT_STATS[b->queue[0]].trainTime*TICK_RATE);
+        DrawRectangleRec((Rectangle){ r.x, r.y + r.height - 4.0f, r.width*frac, 4.0f }, SKYBLUE);
+    }
+}
+
+// Is building i on screen and not hidden by fog?
+static bool BuildingShown(int i, Rectangle view)
+{
+    const Building *b = &buildings[i];
+    if (!b->active) return false;
+    Rectangle r = BuildingRect(i);
+    if (!CheckCollisionRecs(r, view)) return false;   // off screen
+    // Fog: enemy buildings show while visible, or (dimmed by the fog) once seen.
+    return b->team == PLAYER_TEAM || b->seenByPlayer || FogCanSeeRect(PLAYER_TEAM, r);
+}
+
+// Same pass idea as UnitsDraw(): buildings without art are drawn complete
+// first (exactly as before sprites existed), then all the art in one batch,
+// then the bars of the buildings with art on top.
 void BuildingsDraw(Rectangle view)
 {
-    for (int i = 0; i < MAX_BUILDINGS; i++)
+    for (int pass = 0; pass < 3; pass++)
     {
-        const Building *b = &buildings[i];
-        if (!b->active) continue;
-        Rectangle r = BuildingRect(i);
-        if (!CheckCollisionRecs(r, view)) continue;   // off screen
-
-        BuildingsDrawShape(b->team, r, b->constructing);
-
-        // Construction progress along the bottom edge.
-        if (b->constructing)
+        for (int i = 0; i < MAX_BUILDINGS; i++)
         {
-            DrawRectangleRec((Rectangle){ r.x, r.y + r.height - 6.0f, r.width, 6.0f }, Fade(BLACK, 0.6f));
-            DrawRectangleRec((Rectangle){ r.x, r.y + r.height - 6.0f, r.width*BuildingBuildProgress(i), 6.0f }, ORANGE);
-        }
-
-        float maxHp = BUILDING_STATS[b->type].hp;
-        if (b->hp < maxHp)
-        {
-            Rectangle bar = { r.x, r.y - HEALTH_BAR_H - 3.0f, r.width, HEALTH_BAR_H };
-            float frac = b->hp/maxHp;
-            DrawRectangleRec(bar, BLACK);
-            DrawRectangleRec((Rectangle){ bar.x, bar.y, bar.width*frac, bar.height }, (frac > 0.5f) ? GREEN : (frac > 0.25f) ? ORANGE : RED);
-        }
-
-        // Production progress along the bottom edge.
-        if (b->queueCount > 0)
-        {
-            float frac = b->trainTicks/(UNIT_STATS[b->queue[0]].trainTime*TICK_RATE);
-            DrawRectangleRec((Rectangle){ r.x, r.y + r.height - 4.0f, r.width*frac, 4.0f }, SKYBLUE);
+            if (!BuildingShown(i, view)) continue;
+            const Building *b = &buildings[i];
+            bool art = SpritesHaveBuilding(b->type);
+            Rectangle r = BuildingRect(i);
+            if (pass == 0 && !art) { BuildingsDrawLook(b->type, b->team, r, b->constructing); DrawBuildingBars(i, r); }
+            if (pass == 1 && art) BuildingsDrawLook(b->type, b->team, r, b->constructing);
+            if (pass == 2 && art) DrawBuildingBars(i, r);
         }
     }
 }

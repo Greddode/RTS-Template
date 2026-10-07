@@ -89,8 +89,10 @@ void UiLabel(const char *text, float x, float y, float size, Color color)
     DrawText(text, (int)x, (int)y, (int)size, color);
 }
 
+// Shrinks the text if it's wider than the rectangle (long names in buttons).
 static void CenteredText(Rectangle r, const char *text, float size, Color color)
 {
+    while (size > 10.0f && MeasureText(text, (int)size) > r.width - Ui(8.0f)) size -= 1.0f;
     int w = MeasureText(text, (int)size);
     DrawText(text, (int)(r.x + (r.width - w)*0.5f), (int)(r.y + (r.height - size)*0.5f), (int)size, color);
 }

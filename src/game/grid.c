@@ -14,6 +14,7 @@
 
 #include "grid.h"
 #include "units.h"
+#include "fog.h"
 
 static int cellHead[GRID_W * GRID_H];
 static int nextInCell[MAX_UNITS];
@@ -67,6 +68,7 @@ static void CheckCellForEnemy(int cx, int cy, Vector2 pos, int myTeam, int *best
     for (int i = cellHead[cy*GRID_W + cx]; i != -1; i = nextInCell[i])
     {
         if (!units[i].active || units[i].team == myTeam) continue;
+        if (!FogCanSee(myTeam, units[i].pos)) continue;   // can't target what it can't see
         if (units[i].hp <= units[i].incomingDamage) continue;   // already doomed by projectiles in flight
         float dx = units[i].pos.x - pos.x, dy = units[i].pos.y - pos.y;
         float d = dx*dx + dy*dy;
@@ -78,7 +80,8 @@ static void CheckCellForEnemy(int cx, int cy, Vector2 pos, int myTeam, int *best
 // least (r - 1) cells away, so once that's further than the best match so
 // far, no later ring can beat it and the search stops. Nearby enemies are
 // found after a handful of cells. Enemies that projectiles already in the air
-// will kill are skipped: targeting them would only waste attacks.
+// will kill are skipped (targeting them would only waste attacks), and so are
+// enemies hidden by the fog of war.
 int GridFindNearestEnemy(Vector2 pos, float maxDist, int myTeam)
 {
     int cx = CellCoord(pos.x, GRID_W), cy = CellCoord(pos.y, GRID_H);

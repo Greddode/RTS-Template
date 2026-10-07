@@ -4,6 +4,7 @@
 //   Shift + click/drag  add units to the current selection
 //   Right click         move; on an enemy: attack; on gold: workers mine;
 //                       on your unfinished building: workers help build;
+//                       on your damaged unit: selected healers follow and heal it;
 //                       with a building selected: set its rally point (flag)
 //   A, then right click attack-move there (left click or Esc cancels)
 //   S / H               stop / hold position
@@ -25,7 +26,9 @@
 #include "buildings.h"
 #include "camera.h"
 #include "economy.h"
+#include "fog.h"
 #include "grid.h"
+#include "heal.h"
 #include "ui.h"
 #include "units.h"
 #include "raymath.h"
@@ -150,20 +153,23 @@ static void SelectInBox(Rectangle box)
     }
 }
 
-// The closest unit of `team` under the cursor, or -1.
+// The closest unit of `team` under the cursor, or -1. Uses its own buffer:
+// callers often hold the selection in `found` while asking this.
 static int UnitAtPoint(Vector2 point, int team)
 {
+    static int near[64];
     float reach = UNIT_RADIUS + 2.0f;   // a little forgiveness around small units
     Rectangle area = { point.x - reach, point.y - reach, reach*2.0f, reach*2.0f };
-    int count = GridQuery(area, found, MAX_UNITS);
+    int count = GridQuery(area, near, 64);
 
     int best = -1;
     float bestDist = reach;
     for (int k = 0; k < count; k++)
     {
-        if (units[found[k]].team != team) continue;
-        float d = Vector2Distance(units[found[k]].pos, point);
-        if (d <= bestDist) { best = found[k]; bestDist = d; }
+        if (units[near[k]].team != team) continue;
+        if (team != PLAYER_TEAM && !FogCanSee(PLAYER_TEAM, units[near[k]].pos)) continue;   // hidden by fog
+        float d = Vector2Distance(units[near[k]].pos, point);
+        if (d <= bestDist) { best = near[k]; bestDist = d; }
     }
     return best;
 }
@@ -173,6 +179,7 @@ static void ClickSelect(Vector2 point)
     int unit = UnitAtPoint(point, PLAYER_TEAM);
     int building = BuildingAt(point);
     int node = EconomyNodeAt(point);
+    if (node != -1 && !FogExplored(PLAYER_TEAM, goldNodes[node].pos)) node = -1;   // never seen
 
     if (unit != -1) { selBuilding = -1; selNode = -1; SelectUnit(unit); }
     else if (building != -1 && buildings[building].team == PLAYER_TEAM)
@@ -203,7 +210,9 @@ static int KeepNonWorkers(int count)
 }
 
 // Right click, in order of priority: enemy unit, enemy building, your
-// unfinished building (workers help build), gold node, ground.
+// unfinished building (workers help build), gold node, ground. Before the
+// last three, selected healers on a damaged friendly unit follow and heal it
+// (the rest of the selection gets the normal order).
 static void OrderSelected(Vector2 point)
 {
     int count = CollectSelected();
@@ -216,9 +225,26 @@ static void OrderSelected(Vector2 point)
 
     int enemy = UnitAtPoint(point, AI_TEAM);
     int building = BuildingAt(point);
-    bool enemyBuilding = (building != -1 && buildings[building].team != PLAYER_TEAM);
+    bool enemyBuilding = (building != -1 && buildings[building].team != PLAYER_TEAM && FogCanSeeRect(PLAYER_TEAM, BuildingRect(building)));
+    if (building != -1 && buildings[building].team != PLAYER_TEAM && !enemyBuilding) building = -1;   // in fog: just ground
     bool unfinished = (building != -1 && !enemyBuilding && buildings[building].constructing);
     int node = EconomyNodeAt(point);
+    if (node != -1 && !FogExplored(PLAYER_TEAM, goldNodes[node].pos)) node = -1;   // never seen
+
+    int ally = (enemy == -1 && !enemyBuilding) ? UnitAtPoint(point, PLAYER_TEAM) : -1;
+    if (ally != -1 && UnitNeedsHealing(ally))
+    {
+        static int healers[MAX_UNITS];
+        int n = 0, others = 0;
+        for (int k = 0; k < count; k++)
+        {
+            if (UNIT_STATS[units[found[k]].type].canHeal && found[k] != ally) healers[n++] = found[k];
+            else found[others++] = found[k];
+        }
+        HealOrderFollow(healers, n, ally);
+        count = others;
+        if (count == 0) return;
+    }
 
     if (enemy != -1 || enemyBuilding)
     {
@@ -241,6 +267,12 @@ static void OrderSelected(Vector2 point)
         UnitsOrderMove(found, KeepNonWorkers(count), point);
     }
     else UnitsOrderMove(found, count, point);
+}
+
+void InputMoveSelectedTo(Vector2 worldPos)
+{
+    int count = CollectSelected();
+    UnitsOrderMove(found, count, worldPos);
 }
 
 // --- Building placement ---------------------------------------------------------
@@ -277,6 +309,12 @@ static void PlaceBuilding(Vector2 at)
 {
     int worker = NearestSelectedWorker(at);
     if (worker == -1) { placing = false; return; }
+    if (!BuildingsCanBuild(PLAYER_TEAM, placingType))   // e.g. the Barracks was destroyed while placing
+    {
+        UiShowMessage(TextFormat("Requires %s", BUILDING_STATS[BUILDING_STATS[placingType].requires].name));
+        placing = false;
+        return;
+    }
     if (!BuildingCanPlace(placingType, at)) { UiShowMessage("Can't build there"); return; }
     if (!EconomySpend(PLAYER_TEAM, BUILDING_STATS[placingType].cost)) { UiShowMessage("Not enough gold"); return; }
 
@@ -383,7 +421,7 @@ void InputDraw(void)
     {
         Vector2 at = CamMouseWorld();
         Rectangle r = BuildingFootprint(placingType, at);
-        Color c = BuildingCanPlace(placingType, at) ? GHOST_OK : GHOST_BLOCKED;
+        Color c = (BuildingCanPlace(placingType, at) && BuildingsCanBuild(PLAYER_TEAM, placingType)) ? GHOST_OK : GHOST_BLOCKED;
         DrawRectangleRec(r, Fade(c, 0.35f));
         DrawRectangleLinesEx(r, line, c);
     }

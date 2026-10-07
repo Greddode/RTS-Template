@@ -6,8 +6,10 @@
 // so pathfinding and movement avoid buildings without knowing about them.
 // MapGenerate() scatters seeded blobs of dirt/water/rock on grass. Swap it for
 // your own map loader when you have real maps.
+// Tiles are coloured squares from TILE_INFO, or art from assets/sprites/tiles.
 
 #include "map.h"
+#include "sprites.h"
 #include <math.h>
 #include <string.h>
 
@@ -16,6 +18,7 @@
 static unsigned char tiles[MAP_W * MAP_H];
 static bool          blocked[MAP_W * MAP_H];
 static int           mapWidth = MAP_W, mapHeight = MAP_H;   // this map's real size (<= MAP_W x MAP_H)
+static unsigned int  version = 1;                         // bumped on every terrain change
 
 const TileInfo TILE_INFO[TILE_COUNT] = {
     //              name     char  color                      walkable
@@ -49,6 +52,7 @@ static void PaintBlob(int cx, int cy, int radius, TileType type)
 
 void MapGenerate(unsigned int seed)
 {
+    version++;
     rngState = seed;
     mapWidth = MAP_W;
     mapHeight = MAP_H;
@@ -64,6 +68,7 @@ void MapGenerate(unsigned int seed)
 
 void MapSetTiles(int width, int height, const unsigned char *types)
 {
+    version++;
     mapWidth = width;
     mapHeight = height;
     for (int i = 0; i < MAP_W*MAP_H; i++) { tiles[i] = TILE_ROCK; blocked[i] = false; }
@@ -87,12 +92,14 @@ void MapBackup(void)
 
 void MapRestore(void)
 {
+    version++;
     memcpy(tiles, backupTiles, sizeof(tiles));
     memcpy(blocked, backupBlocked, sizeof(blocked));
     mapWidth = backupWidth;
     mapHeight = backupHeight;
 }
 
+unsigned MapVersion(void) { return version; }
 int MapWidth(void)  { return mapWidth; }
 int MapHeight(void) { return mapHeight; }
 
@@ -121,6 +128,7 @@ void MapSetBlocked(int tx, int ty, int w, int h, bool isBlocked)
 
 void MapClearArea(Vector2 worldPos, int radiusTiles)
 {
+    version++;
     PaintBlob((int)(worldPos.x/TILE_SIZE), (int)(worldPos.y/TILE_SIZE), radiusTiles, TILE_GRASS);
 }
 
@@ -150,11 +158,14 @@ bool MapLineClear(Vector2 from, Vector2 to, float radius)
     return true;
 }
 
+// Tiles with art (sprites.c) are drawn in their own pass after the plain
+// ones, so all the art goes out in one batch (see UnitsDraw()).
 void MapDraw(Rectangle view)
 {
-    // Grass is the most common tile, so paint the whole map grass in one
-    // rectangle and only draw the other tiles on top: far fewer draw calls.
-    DrawRectangle(0, 0, mapWidth*TILE_SIZE, mapHeight*TILE_SIZE, TILE_INFO[TILE_GRASS].color);
+    // Grass is the most common tile, so without grass art paint the whole map
+    // grass in one rectangle and only draw the other tiles on top: far fewer draw calls.
+    bool grassArt = SpritesHaveTile(TILE_GRASS);
+    if (!grassArt) DrawRectangle(0, 0, mapWidth*TILE_SIZE, mapHeight*TILE_SIZE, TILE_INFO[TILE_GRASS].color);
 
     // Only loop over the tiles the camera can see.
     int x0 = (int)floorf(view.x / TILE_SIZE),                y0 = (int)floorf(view.y / TILE_SIZE);
@@ -169,7 +180,16 @@ void MapDraw(Rectangle view)
         for (int x = x0; x <= x1; x++)
         {
             TileType t = (TileType)tiles[y*MAP_W + x];
-            if (t != TILE_GRASS) DrawRectangle(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE, TILE_INFO[t].color);
+            if (t != TILE_GRASS && !SpritesHaveTile(t)) DrawRectangle(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE, TILE_INFO[t].color);
+        }
+    }
+
+    for (int y = y0; y <= y1; y++)
+    {
+        for (int x = x0; x <= x1; x++)
+        {
+            TileType t = (TileType)tiles[y*MAP_W + x];
+            if (SpritesHaveTile(t)) SpritesDrawTile(t, x, y);
         }
     }
 }

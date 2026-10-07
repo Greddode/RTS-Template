@@ -3,6 +3,7 @@
 #define INPUT_H_INCLUDED
 
 #include "config.h"
+#include "raylib.h"
 #include <stdbool.h>
 
 void InputUpdate(void);            // call once per frame, after CamUpdate()
@@ -18,6 +19,7 @@ int  InputSelectedBuilding(void);            // or -1
 int  InputSelectedNode(void);                // or -1
 
 void InputTogglePlacement(BuildingType type);   // Build button: start placing, or cancel if already placing it
+void InputMoveSelectedTo(Vector2 worldPos);       // move order for the selected units (the minimap's right click)
 bool InputIsPlacing(BuildingType type);
 
 #endif

@@ -35,14 +35,18 @@
 #include "camera.h"
 #include "combat.h"
 #include "economy.h"
+#include "fog.h"
 #include "editor.h"
 #include "grid.h"
+#include "heal.h"
 #include "input.h"
 #include "inspector.h"
 #include "map.h"
 #include "mapfile.h"
 #include "menu.h"
+#include "minimap.h"
 #include "path.h"
+#include "sprites.h"
 #include "ui.h"
 #include "units.h"
 #include "raymath.h"
@@ -57,7 +61,7 @@
 #define AI_BASE_OFFSET  (Vector2){ 1100.0f, -800.0f }   // AI base, relative to the player's base
 #define BASE_CLEARING   8        // tiles of open ground made around each base
 #define START_WORKERS   6        // player's starting workers
-#define START_ARMY      20       // player's starting combat units, half melee / half ranged
+#define START_ARMY      20       // player's starting combat units, half melee / half archers
 #define AI_WORKERS      4
 #define NODES_PER_BASE  5        // gold nodes in an arc next to each base
 #define NODE_DISTANCE   200.0f   // from base centre
@@ -94,6 +98,7 @@ int main(void)
     InitWindow(SCREEN_W, SCREEN_H, "RTS Kit");
     SetExitKey(KEY_NULL);   // Esc opens the pause menu instead of closing the window
     InspectorCheckHotkeys();   // logs a warning if two hotkeys clash
+    SpritesLoad();             // art from assets/sprites (needs the window: textures live on the GPU)
 
 #if defined(__EMSCRIPTEN__)
     // The browser owns the main loop: it calls us once per frame.
@@ -106,6 +111,7 @@ int main(void)
     }
 #endif
 
+    SpritesUnload();
     CloseWindow();
     return 0;
 }
@@ -149,7 +155,7 @@ static void SetupStart(Vector2 playerBase, Vector2 aiBase)
     float below = TILE_SIZE*3.0f;   // just under the 3x3 base
     SpawnUnitsNear((Vector2){ playerBase.x, playerBase.y + below }, START_WORKERS, UNIT_WORKER, PLAYER_TEAM);
     SpawnUnitsNear((Vector2){ playerBase.x - 60.0f, playerBase.y + below*2.5f }, START_ARMY/2, UNIT_MELEE, PLAYER_TEAM);
-    SpawnUnitsNear((Vector2){ playerBase.x + 60.0f, playerBase.y + below*2.5f }, START_ARMY/2, UNIT_RANGED, PLAYER_TEAM);
+    SpawnUnitsNear((Vector2){ playerBase.x + 60.0f, playerBase.y + below*2.5f }, START_ARMY/2, UNIT_ARCHER, PLAYER_TEAM);
     SpawnUnitsNear((Vector2){ aiBase.x, aiBase.y + below }, AI_WORKERS, UNIT_WORKER, AI_TEAM);
 
     AiInit(playerBase, aiBase, aiBaseId);
@@ -204,6 +210,8 @@ static void StartNewGame(const char *mapPath)
     }
 
     GridRebuild();
+    FogReset();   // after the map and starting units exist
+    MinimapReset();
     tickAccumulator = 0.0;
     gameTicks = 0;
 }
@@ -294,6 +302,7 @@ static void UpdatePlaying(void)
         CombatProjectilesTick();
         AiTick();
         GridRebuild();
+        FogTick();
         lastTickMs = (GetTime() - start)*1000.0;
         tickAccumulator -= TICK_DT;
         gameTicks++;
@@ -310,7 +319,9 @@ static void DrawWorld(void)
         EconomyDrawNodes(view);
         BuildingsDraw(view);
         UnitsDraw(view, alpha);
+        HealDraw(view, alpha);
         CombatProjectilesDraw(view, alpha);
+        FogDraw(view);
         InputDraw();
     EndMode2D();
 }
@@ -342,6 +353,7 @@ static void UpdateDrawFrame(void)
     {
         DrawWorld();
         EconomyDrawHud(PLAYER_TEAM);
+        MinimapDraw();     // clickable: only while playing
         InspectorDraw();   // has the Train/Build buttons: only while playing
         UiDrawMessage();
         DrawOverlay();
@@ -391,10 +403,11 @@ static void DrawOverlay(void)
     UiPanel((Rectangle){ 0, 0, Ui(420.0f), Ui(140.0f) });
     UiLabel(TextFormat("%d FPS", GetFPS()), x, Ui(8.0f), Ui(20.0f), LIME);
     UiLabel(TextFormat("Units: %d   Projectiles: %d", UnitsActiveCount(), CombatProjectileCount()), x, Ui(8.0f) + line*1.2f, size, RAYWHITE);
-    UiLabel(TextFormat("Sim tick: %.2f ms", lastTickMs), x, Ui(8.0f) + line*2.2f, size, RAYWHITE);
+    UiLabel(TextFormat("Sim tick: %.2f ms   Fog: %.2f ms", lastTickMs, FogLastUpdateMs()), x, Ui(8.0f) + line*2.2f, size, RAYWHITE);
     UiLabel(TextFormat("Paths queued: %d   Path: %.2f ms", PathQueueLength(), PathLastFrameMs()), x, Ui(8.0f) + line*3.2f, size, RAYWHITE);
     UiLabel(AiDebugLine(), x, Ui(8.0f) + line*4.2f, size, RAYWHITE);
     UiLabel(TextFormat("AI: %s", AiStatus()), x, Ui(8.0f) + line*5.2f, size, GOLD);
 
-    UiLabel(TextFormat("%s: pause menu & controls", UiKeyName(KEY_PAUSE)), x, GetScreenHeight() - Ui(26.0f), Ui(18.0f), RAYWHITE);
+    float hintY = MINIMAP_ENABLED ? MinimapRect().y - Ui(24.0f) : GetScreenHeight() - Ui(26.0f);   // above the minimap
+    UiLabel(TextFormat("%s: pause menu & controls", UiKeyName(KEY_PAUSE)), x, hintY, Ui(18.0f), RAYWHITE);
 }

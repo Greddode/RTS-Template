@@ -11,6 +11,7 @@
 
 #include "menu.h"
 #include "config.h"
+#include "fog.h"
 #include "mapfile.h"
 #include "ui.h"
 #include <stddef.h>
@@ -185,11 +186,13 @@ MenuAction MenuPause(void)
     if (showingControls) { if (ControlsPage()) showingControls = false; return MENU_NONE; }
 
 #if defined(__EMSCRIPTEN__)
-    Rectangle b = MenuFrame("Paused", 3);
-#else
     Rectangle b = MenuFrame("Paused", 4);
+#else
+    Rectangle b = MenuFrame("Paused", 5);
 #endif
     if (UiButton(b, "Resume", KEY_PAUSE)) return MENU_RESUME;
+    b = NextButton(b);
+    if (UiButton(b, FogEnabled() ? "Fog of war: On" : "Fog of war: Off", 0)) FogSetEnabled(!FogEnabled());
     b = NextButton(b);
     if (UiButton(b, "Controls", 0)) showingControls = true;
     b = NextButton(b);

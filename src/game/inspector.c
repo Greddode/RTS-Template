@@ -23,6 +23,7 @@
 #include "config.h"
 #include "economy.h"
 #include "input.h"
+#include "minimap.h"
 #include "ui.h"
 #include "units.h"
 
@@ -42,12 +43,14 @@
 static float buttonScroll = 0.0f;          // scroll position of the button list
 static unsigned int scrollOwner = 0;       // what it belongs to: reset when the selection changes
 
+// Bottom of the screen, centred in the space right of the minimap.
 static Rectangle Panel(void)
 {
+    float left = MINIMAP_ENABLED ? MinimapRect().x + MinimapRect().width + Ui(10.0f) : Ui(10.0f);
+    float space = GetScreenWidth() - left - Ui(10.0f);
     float w = Ui(PANEL_W);
-    float max = GetScreenWidth() - Ui(20.0f);
-    if (w > max) w = max;
-    return (Rectangle){ (GetScreenWidth() - w)*0.5f, GetScreenHeight() - Ui(PANEL_H) - Ui(40.0f), w, Ui(PANEL_H) };
+    if (w > space) w = space;
+    return (Rectangle){ left + (space - w)*0.5f, GetScreenHeight() - Ui(PANEL_H) - Ui(10.0f), w, Ui(PANEL_H) };
 }
 
 static void Bar(float x, float y, float w, float frac, Color color)
@@ -65,6 +68,7 @@ static Color HealthColor(float frac)
 
 static const char *OrderText(const Unit *u)
 {
+    if (u->healing)      return u->healOrdered ? "Healing (following)" : "Healing";
     if (u->attacking)    return u->attackTargetIsBuilding ? "Attacking building" : "Attacking";
     if (u->buildOrder)   return "Constructing";
     switch (u->gatherState)
@@ -126,9 +130,28 @@ static void DrawOneUnit(Rectangle panel, const Unit *u)
     Bar(x, y, Ui(200.0f), u->hp/s->hp, HealthColor(u->hp/s->hp));
     UiLabel(TextFormat("%d / %d", (int)u->hp, (int)s->hp), x + Ui(210.0f), y - Ui(2.0f), Ui(SMALL), RAYWHITE);
     y += Ui(22.0f);
-    UiLabel(TextFormat("Damage %d   Range %d   Speed %d", (int)s->damage, (int)s->range, (int)s->speed), x, y, Ui(SMALL), RAYWHITE);
-    y += Ui(22.0f);
+    if (s->canHeal)   // healers: heal stats instead of damage
+        UiLabel(TextFormat("Healer: %g HP/s   Heal range %d   Speed %d", s->healRate, (int)s->healRange, (int)s->speed), x, y, Ui(SMALL), RAYWHITE);
+    else
+        UiLabel(TextFormat("Damage %d %s   Range %d   Speed %d", (int)s->damage, DAMAGE_TYPE_NAMES[s->damageType], (int)s->range, (int)s->speed), x, y, Ui(SMALL), RAYWHITE);
+    y += Ui(20.0f);
+    UiLabel(TextFormat("Armor %g %s", s->armor, ARMOR_TYPE_NAMES[s->armorType]), x, y, Ui(SMALL), RAYWHITE);
+    y += Ui(20.0f);
     UiLabel(TextFormat("Order: %s", OrderText(u)), x, y, Ui(SMALL), GOLD);
+
+    // Splash / minimum range, from the table, in the right half (units have no buttons there).
+    if (s->splashRadius > 0.0f || s->minRange > 0.0f)
+    {
+        float rx = panel.x + Ui(INFO_W) + Ui(PAD), ry = panel.y + Ui(PAD);
+        SectionTitle(panel, "Splash");
+        if (s->splashRadius > 0.0f)
+        {
+            UiLabel(TextFormat("Radius %d px (hits friends too)", (int)s->splashRadius), rx, ry + Ui(26.0f), Ui(SMALL), RAYWHITE);
+            UiLabel(TextFormat("Edge damage %d%% of the centre", (int)(s->splashFalloff*100.0f + 0.5f)), rx, ry + Ui(46.0f), Ui(SMALL), RAYWHITE);
+        }
+        if (s->minRange > 0.0f)
+            UiLabel(TextFormat("Min range %d px (won't fire closer)", (int)s->minRange), rx, ry + Ui(66.0f), Ui(SMALL), RAYWHITE);
+    }
 }
 
 // --- Several units ------------------------------------------------------------------
@@ -181,11 +204,15 @@ static void DrawBuildButtons(Rectangle panel)
         const BuildingStats *s = &BUILDING_STATS[t];
         if (!Buildable(t)) continue;
         bool affordable = EconomyGold(PLAYER_TEAM) >= s->cost;
+        bool unlocked = BuildingsCanBuild(PLAYER_TEAM, (BuildingType)t);   // prerequisite (`requires`) met
         const char *label = InputIsPlacing((BuildingType)t) ? TextFormat("Placing %s...", s->name)
-                                                            : TextFormat("%s  %dg  [%s]", s->name, s->cost, UiKeyName(s->hotkey));
-        if (UiButtonEx(ButtonSlot(area, k++, offset), label, s->hotkey, !affordable))
+                          : unlocked ? TextFormat("%s  %dg  [%s]", s->name, s->cost, UiKeyName(s->hotkey))
+                                     : TextFormat("%s - Requires %s", s->name, BUILDING_STATS[s->requires].name);
+        if (UiButtonEx(ButtonSlot(area, k++, offset), label, s->hotkey, !affordable || !unlocked))
         {
-            if (affordable || InputIsPlacing((BuildingType)t)) InputTogglePlacement((BuildingType)t);
+            if (InputIsPlacing((BuildingType)t)) InputTogglePlacement((BuildingType)t);   // cancel
+            else if (!unlocked) UiShowMessage(TextFormat("Requires %s", BUILDING_STATS[s->requires].name));
+            else if (affordable) InputTogglePlacement((BuildingType)t);
             else UiShowMessage("Not enough gold");
         }
     }
@@ -200,6 +227,8 @@ static void DrawBuilding(Rectangle panel, int id)
     float x = panel.x + Ui(PAD), y = panel.y + Ui(PAD);
 
     UiLabel(s->name, x, y, Ui(22.0f), RAYWHITE);
+    if (s->requires != BUILDING_NONE)   // its prerequisite, from the table
+        UiLabel(TextFormat("needs: %s", BUILDING_STATS[s->requires].name), x + MeasureText(s->name, (int)Ui(22.0f)) + Ui(14.0f), y + Ui(5.0f), Ui(SMALL), LIGHTGRAY);
     y += Ui(32.0f);
     Bar(x, y, Ui(200.0f), b->hp/s->hp, HealthColor(b->hp/s->hp));
     UiLabel(TextFormat("%d / %d", (int)b->hp, (int)s->hp), x + Ui(210.0f), y - Ui(2.0f), Ui(SMALL), RAYWHITE);

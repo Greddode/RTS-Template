@@ -33,6 +33,7 @@ typedef struct Unit {
     bool    attackMove;      // attack-move order: fight enemies met on the way...
     Vector2 attackMoveDest;  // ...then carry on to this spot
     bool    holdPosition;    // hold order: only fight enemies already in range, never chase
+    bool    facingLeft;      // art is drawn mirrored (sprites face right in the PNG)
 
     // Combat (combat.c)
     bool         attacking;
@@ -61,6 +62,12 @@ typedef struct Unit {
     unsigned int buildSiteSerial;     // ...and serial
 
     int          orderRetries;        // gather/build: path attempts left before giving up
+
+    // Healing (heal.c) - healers only
+    bool         healing;             // has a patient
+    bool         healOrdered;         // right-clicked: follow this one anywhere until it's full
+    int          healTarget;          // unit slot...
+    unsigned int healTargetSerial;    // ...and serial
 } Unit;
 
 extern Unit units[MAX_UNITS];
