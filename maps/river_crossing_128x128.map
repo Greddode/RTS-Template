@@ -1,5 +1,4 @@
-# Large open map: a winding river with three bridges (chokepoints).
-# See duel.map for the file format.
+# Made with the RTS Kit map editor. The file format is described in duel.map.
 
 name River Crossing (128x128)
 width 128
@@ -134,7 +133,6 @@ tiles
 ......................................................~~~~~~....................................................................
 ......................................................~~~~~~....................................................................
 
-# Player on the left, AI on the right. Three bridges cross the river.
 base 0 14 60
 base 1 111 65
 gold 8 52 1500
@@ -147,42 +145,36 @@ gold 8 73 1500
 gold 119 54 1500
 gold 13 77 1500
 gold 114 50 1500
-# Contested gold near the bridges
 gold 45 22 2000
 gold 82 105 2000
 gold 46 64 2000
 gold 81 63 2000
 gold 45 104 2000
 gold 82 23 2000
-worker 0 19 58
-worker 1 108 69
-worker 0 19 60
-worker 1 108 67
-worker 0 19 62
-worker 1 108 65
-worker 0 19 64
-worker 1 108 63
-worker 0 20 59
-worker 1 107 68
-worker 0 20 61
-worker 1 107 66
-melee 0 24 58
-melee 1 103 69
-melee 0 24 60
-melee 1 103 67
-melee 0 24 62
-melee 1 103 65
-melee 0 24 64
-melee 1 103 63
-melee 0 24 66
-melee 1 103 61
-archer 0 22 58
-archer 1 105 69
-archer 0 22 60
-archer 1 105 67
-archer 0 22 62
-archer 1 105 65
-archer 0 22 64
-archer 1 105 63
-archer 0 22 66
-archer 1 105 61
+gold 45 25 1500
+gold 45 19 1500
+gold 48 16 1500
+gold 49 28 1500
+gold 46 68 1500
+gold 49 60 1500
+gold 49 72 1500
+gold 45 111 1500
+gold 50 100 1500
+gold 50 113 1500
+gold 82 110 1500
+gold 78 114 1500
+gold 78 100 1500
+gold 81 68 1500
+gold 77 57 1500
+gold 78 71 1500
+gold 82 16 1500
+gold 78 12 1500
+gold 78 29 1500
+worker 0 12 60
+worker 0 12 63
+worker 0 16 65
+worker 0 14 65
+worker 1 111 63
+worker 1 113 63
+worker 1 115 65
+worker 1 115 67
