@@ -15,14 +15,18 @@
 //      base that's furthest below its target trains one, if the AI can pay.
 //      Once every base is saturated it stops, so gold goes to the army.
 //      (While it's still waiting for a Barracks, the Barracks comes first.)
-//   3. Expansion (every AI_EXPAND_CHECK_TICKS): look for a gold node that is
-//      far from its drop-offs, still rich, reachable and not next to an enemy
-//      building. With the base's cost plus a reserve (or just the cost when
-//      its own nodes run low), one worker builds a new Base near it. Once its
+//   3. Expansion (every AI_EXPAND_CHECK_TICKS): look for a gold FIELD (a node
+//      plus the nodes within AI_FIELD_TILES of it, like a StarCraft mineral
+//      field) with enough gold that no Base of either side is near yet, that
+//      it can reach and that isn't next to an enemy building; the nearest
+//      wins. The new Base goes where it's closest to the whole field, with
+//      AI_BASE_GOLD_GAP tiles of open ground left for the workers. With the
+//      base's cost plus a reserve (or just the cost when its own nodes run
+//      low), one worker builds it. Once its
 //      workers are saturated (or its gold runs low) it also saves up for it,
 //      pausing combat training (AI_SAVE_FOR_EXPANSION). One expansion
 //      at a time; if the builder dies, the site is cancelled (refunded) and
-//      that node isn't tried again. The new base's rally point faces its node.
+//      that field isn't tried again. The new base's rally point faces its gold.
 //   4. Idle units: workers go to the gold node near their base with the
 //      fewest workers on it; combat units attack the nearest player unit (or
 //      building, or march on the player's base).
@@ -61,7 +65,9 @@ static bool         savingForTech = false;
 // Expansion in progress (one at a time).
 static bool         expanding = false, savingForExpansion = false;
 static int          expSite, expBuilder;
-static unsigned int expSiteSerial, expBuilderSerial, expNodeSerial;
+static unsigned int expSiteSerial, expBuilderSerial;
+static unsigned int expField[MAX_GOLD_NODES];   // serials of the field's nodes (forgotten if it fails)
+static int          expFieldCount = 0;
 static unsigned int failedNodes[AI_MAX_FAILED_NODES];   // serials of nodes it gave up on
 static int          failedCount = 0;
 
@@ -391,24 +397,126 @@ static int OwnGoldLeft(void)
     return total;
 }
 
-// A node worth a new base: (a) far from our drop-offs, (b) rich enough,
-// (c) reachable, (d) not next to an enemy building. Nearest one wins.
-static int FindExpansionNode(Vector2 from)
+// --- Gold fields -----------------------------------------------------------------------
+
+typedef struct GoldField {
+    int     nodes[MAX_GOLD_NODES];
+    int     count;
+    int     gold;     // total gold left
+    Vector2 centre;   // average position of its nodes
+} GoldField;
+
+// Free: has gold, wasn't given up on, and no Base (either side, finished or
+// not) is near it yet. Worked out once per search by MarkFreeNodes().
+static bool nodeFree[MAX_GOLD_NODES];
+
+static void MarkFreeNodes(void)
 {
-    int best = -1;
-    float bestDist = 0.0f;
     for (int n = 0; n < MAX_GOLD_NODES; n++)
     {
-        const GoldNode *g = &goldNodes[n];
-        if (!g->active || NodeFailed(n)) continue;
-        if (NearestDropOff(g->pos, AI_EXPAND_MIN_TILES*TILE_SIZE) != -1) continue;                      // (a)
-        if (g->amount < AI_EXPAND_MIN_GOLD) continue;                                                  // (b)
-        if (PathRegion(g->pos) != homeRegion) continue;                                                // (c)
-        if (BuildingsFindNearestEnemy(g->pos, AI_EXPAND_ENEMY_TILES*TILE_SIZE, AI_TEAM) != -1) continue; // (d)
-        float d = Vector2Distance(from, g->pos);
-        if (best == -1 || d < bestDist) { bestDist = d; best = n; }
+        nodeFree[n] = goldNodes[n].active && goldNodes[n].amount > 0 && !NodeFailed(n);
+        for (int b = 0; b < MAX_BUILDINGS && nodeFree[n]; b++)
+            if (buildings[b].active && buildings[b].type == BUILDING_BASE &&
+                BuildingDistance(b, goldNodes[n].pos) <= AI_CLAIMED_TILES*TILE_SIZE) nodeFree[n] = false;
     }
-    return best;
+}
+
+static bool NodeFree(int n)
+{
+    return nodeFree[n];
+}
+
+// The field around node `seed`: it plus every free node within AI_FIELD_TILES of it.
+static void FieldAround(int seed, GoldField *f)
+{
+    f->count = 0; f->gold = 0; f->centre = (Vector2){ 0 };
+    for (int n = 0; n < MAX_GOLD_NODES; n++)
+    {
+        if (!NodeFree(n) || Vector2Distance(goldNodes[n].pos, goldNodes[seed].pos) > AI_FIELD_TILES*TILE_SIZE) continue;
+        f->nodes[f->count++] = n;
+        f->gold += goldNodes[n].amount;
+        f->centre = Vector2Add(f->centre, goldNodes[n].pos);
+    }
+    if (f->count > 0) f->centre = Vector2Scale(f->centre, 1.0f/f->count);
+}
+
+// Is the field around node `seed` worth a Base? Enough free gold, reachable,
+// no enemy building near.
+static bool FieldWorthIt(int seed, GoldField *f)
+{
+    if (!NodeFree(seed) || PathRegion(goldNodes[seed].pos) != homeRegion) return false;
+    FieldAround(seed, f);
+    return f->gold >= AI_EXPAND_MIN_GOLD && BuildingsFindNearestEnemy(f->centre, AI_EXPAND_ENEMY_TILES*TILE_SIZE, AI_TEAM) == -1;
+}
+
+// The nearest field worth a Base. Each node gives a field (it and its
+// neighbours), so one cluster of nodes gives several overlapping ones: of
+// those near the nearest, take the one holding the most gold.
+static bool FindExpansionField(Vector2 from, GoldField *best)
+{
+    static GoldField f;
+    MarkFreeNodes();
+    int nearest = -1;
+    float nearestDist = 0.0f;
+    for (int n = 0; n < MAX_GOLD_NODES; n++)
+    {
+        if (!FieldWorthIt(n, &f)) continue;
+        float d = Vector2Distance(from, f.centre);
+        if (nearest == -1 || d < nearestDist) { nearest = n; nearestDist = d; *best = f; }
+    }
+    if (nearest == -1) return false;
+    Vector2 around = best->centre;
+    for (int n = 0; n < MAX_GOLD_NODES; n++)
+    {
+        if (Vector2Distance(goldNodes[n].pos, around) > AI_FIELD_TILES*TILE_SIZE || !FieldWorthIt(n, &f)) continue;
+        if (f.gold > best->gold) *best = f;
+    }
+    return true;
+}
+
+// Where a Base serves this field best: on open, reachable ground, at least
+// AI_BASE_GOLD_GAP tiles from any gold, as close as possible to all the
+// field's nodes (smallest total distance), keeping each within
+// AI_NODE_RANGE_TILES when it can (so they all count as this base's gold).
+static bool FieldBaseSpot(const GoldField *f, Vector2 *out)
+{
+    int cx = (int)(f->centre.x/TILE_SIZE), cy = (int)(f->centre.y/TILE_SIZE), r = AI_FIELD_TILES + 4;
+    float bestScore = 0.0f;
+    bool found = false, bestAllInRange = false;
+    for (int ty = cy - r; ty <= cy + r; ty++)
+        for (int tx = cx - r; tx <= cx + r; tx++)
+        {
+            Vector2 p = { (tx + 0.5f)*TILE_SIZE, (ty + 0.5f)*TILE_SIZE };
+            if (!BuildingCanPlace(BUILDING_BASE, p) || PathRegion(p) != homeRegion) continue;
+            Rectangle rect = BuildingFootprint(BUILDING_BASE, p);
+            bool tooClose = false;
+            for (int n = 0; n < MAX_GOLD_NODES && !tooClose; n++)
+            {
+                if (!goldNodes[n].active) continue;
+                Vector2 q = { Clamp(goldNodes[n].pos.x, rect.x, rect.x + rect.width), Clamp(goldNodes[n].pos.y, rect.y, rect.y + rect.height) };
+                tooClose = Vector2Distance(q, goldNodes[n].pos) < (AI_BASE_GOLD_GAP + 0.5f)*TILE_SIZE;
+            }
+            if (tooClose) continue;
+            float score = 0.0f;
+            bool allInRange = true;
+            for (int k = 0; k < f->count; k++)
+            {
+                Vector2 g = goldNodes[f->nodes[k]].pos;
+                Vector2 q = { Clamp(g.x, rect.x, rect.x + rect.width), Clamp(g.y, rect.y, rect.y + rect.height) };
+                float d = Vector2Distance(q, g);
+                score += d;
+                if (d > AI_NODE_RANGE_TILES*TILE_SIZE) allInRange = false;
+            }
+            bool better = !found || (allInRange && !bestAllInRange) || (allInRange == bestAllInRange && score < bestScore);
+            if (better) { found = true; bestScore = score; bestAllInRange = allInRange; *out = p; }
+        }
+    return found;
+}
+
+static void ForgetField(void)
+{
+    for (int k = 0; k < expFieldCount; k++) ForgetNode(expField[k]);
+    expFieldCount = 0;
 }
 
 // Check on the expansion being built: finished, destroyed, or builder lost.
@@ -419,7 +527,7 @@ static void WatchExpansion(void)
     if (!BuildingIsAlive(expSite, expSiteSerial))   // destroyed by the player
     {
         expanding = false;
-        ForgetNode(expNodeSerial);
+        ForgetField();
         Note(expandNote, sizeof(expandNote), "Lost an expansion");
         return;
     }
@@ -435,7 +543,7 @@ static void WatchExpansion(void)
     {
         BuildingDestroy(expSite);
         EconomyAdd(AI_TEAM, cost);   // our own cancellation: refunded
-        ForgetNode(expNodeSerial);
+        ForgetField();
         expanding = false;
         Note(expandNote, sizeof(expandNote), "Gave up an expansion (builder lost)");
         return;
@@ -451,8 +559,8 @@ static void ExpandTick(void)
 
     int anchor = AnchorBase();
     if (anchor == -1 || CountOurBases() >= AI_MAX_BASES) return;
-    int node = FindExpansionNode(BuildingCentre(anchor));
-    if (node == -1) return;   // nothing qualifies: don't expand
+    static GoldField field;
+    if (!FindExpansionField(BuildingCentre(anchor), &field)) return;   // nothing qualifies: don't expand
 
     int cost = BUILDING_STATS[BUILDING_BASE].cost;
     bool runningLow = OwnGoldLeft() < AI_EXPAND_LOW_GOLD;
@@ -472,9 +580,11 @@ static void ExpandTick(void)
     }
 
     Vector2 spot;
-    if (!BuildingsFindSpot(BUILDING_BASE, goldNodes[node].pos, &spot) || PathRegion(spot) != homeRegion)
+    expFieldCount = 0;
+    for (int k = 0; k < field.count; k++) expField[expFieldCount++] = goldNodes[field.nodes[k]].serial;
+    if (!FieldBaseSpot(&field, &spot))
     {
-        ForgetNode(goldNodes[node].serial);   // no room there
+        ForgetField();   // no room for a Base there
         return;
     }
 
@@ -496,8 +606,8 @@ static void ExpandTick(void)
     expanding = true;
     expSite = site;               expSiteSerial = buildings[site].serial;
     expBuilder = builder;         expBuilderSerial = units[builder].serial;
-    expNodeSerial = goldNodes[node].serial;
-    Note(expandNote, sizeof(expandNote), "Expanding to gold at %d,%d", (int)(goldNodes[node].pos.x/TILE_SIZE), (int)(goldNodes[node].pos.y/TILE_SIZE));
+    Note(expandNote, sizeof(expandNote), "Expanding to a gold field at %d,%d (%d nodes, %d gold)",
+         (int)(field.centre.x/TILE_SIZE), (int)(field.centre.y/TILE_SIZE), field.count, field.gold);
 }
 
 // --- Combat units -----------------------------------------------------------------------

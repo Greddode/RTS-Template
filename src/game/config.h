@@ -199,14 +199,17 @@ static const ControlInfo CONTROLS[] = {
 #define AI_WORKER_QUEUE         1               // workers queued at a base at once (keeps gold free)
 #define AI_NODE_RANGE_TILES     12              // a node this close to a finished drop-off belongs to that base
 #define AI_EXPAND_CHECK_TICKS   (TICK_RATE*4)   // look for an expansion every 4 s
-#define AI_EXPAND_MIN_TILES     15              // (a) candidate node: at least this far from all our drop-offs
-#define AI_EXPAND_MIN_GOLD      800             // (b) ...with at least this much gold left
-#define AI_EXPAND_ENEMY_TILES   20              // (d) ...and no enemy building this close to it
+// Expansions go to gold FIELDS (clusters of nodes), like StarCraft mineral fields:
+#define AI_FIELD_TILES          7               // a field: a gold node plus every node this close to it
+#define AI_CLAIMED_TILES        10              // a node with any Base (either side, even unfinished) this close is taken
+#define AI_EXPAND_MIN_GOLD      3000            // a field needs at least this much unclaimed gold to be worth a Base
+#define AI_EXPAND_ENEMY_TILES   20              // ...and no enemy building this close to it
+#define AI_BASE_GOLD_GAP        2               // tiles of open ground kept between a new Base and any gold (room for workers)
 #define AI_EXPAND_RESERVE       100             // "spare gold": the base's cost plus this
 #define AI_EXPAND_LOW_GOLD      2000            // gold left in our nodes below this: expand without the reserve
 #define AI_SAVE_FOR_EXPANSION   1               // 1: pause combat training while saving for an expansion
 #define AI_MAX_BASES            3               // cap on bases (finished or being built)
-#define AI_MAX_FAILED_NODES     16              // nodes it gave up expanding to (builder died) are remembered
+#define AI_MAX_FAILED_NODES     32              // nodes of fields it gave up expanding to (builder died) are remembered
 #define AI_BARRACKS_QUEUE       2               // combat units queued per production building; "full" means this many
 #define AI_EXTRA_BARRACKS_GOLD  600             // more gold banked than this, every Barracks full: build another
 #define AI_MAX_BARRACKS         3               // cap on Barracks (finished or being built)

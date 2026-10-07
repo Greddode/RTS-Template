@@ -172,12 +172,20 @@ Every 2 seconds the AI:
 2. **Workers:** each base aims for **8 workers per reachable gold node** near it (at most **16**),
    training at the base that needs them most. When every base is saturated it stops, and the
    gold goes into the army.
-3. **Expansion:** looks for a gold node that is far from its bases (15+ tiles), still rich
-   (800+ gold), **reachable**, and not near a player building (20 tiles). With a base's cost plus
-   a reserve it sends **one** worker to build a new Base there. It saves up for one (pausing army
-   training) once its workers are saturated or its own gold is running low. One expansion at a
-   time, at most 3 bases. If the builder dies, the site is cancelled (refunded) and that node
-   isn't tried again.
+3. **Expansion to gold fields:** gold is treated like StarCraft mineral fields. A **field** is a
+   gold node plus every node within 7 tiles of it (`AI_FIELD_TILES`). The AI expands to the
+   nearest field that:
+   - still holds **3,000+ gold** that no Base is near yet: a node with any Base (either side,
+     even unfinished) within 10 tiles is taken (`AI_EXPAND_MIN_GOLD`, `AI_CLAIMED_TILES`);
+   - it can **reach**, with no enemy building within 20 tiles (`AI_EXPAND_ENEMY_TILES`).
+
+   Of the overlapping fields around that spot it takes the one with the most gold. It then puts the
+   Base where it's **closest to all of that field's nodes**, on open reachable ground, keeping
+   2 tiles of open ground between the Base and any gold so workers can walk around
+   (`AI_BASE_GOLD_GAP`). With a base's cost plus a reserve it sends **one** worker to build it.
+   It saves up for one (pausing army training) once its workers are saturated or its own gold is
+   running low. One expansion at a time, at most 3 bases. If the builder dies, the site is
+   cancelled (refunded) and that field isn't tried again.
 4. **Army:** idle workers go to the near node with the fewest workers; combat units attack the
    nearest player unit or building (Medics follow along and heal; Mages hold fire while their
    own units are in the splash). Every 5 seconds it queues units by the **army mix**,
