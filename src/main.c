@@ -35,6 +35,7 @@
 #include "camera.h"
 #include "combat.h"
 #include "economy.h"
+#include "fog.h"
 #include "editor.h"
 #include "grid.h"
 #include "input.h"
@@ -204,6 +205,7 @@ static void StartNewGame(const char *mapPath)
     }
 
     GridRebuild();
+    FogReset();   // after the map and starting units exist
     tickAccumulator = 0.0;
     gameTicks = 0;
 }
@@ -294,6 +296,7 @@ static void UpdatePlaying(void)
         CombatProjectilesTick();
         AiTick();
         GridRebuild();
+        FogTick();
         lastTickMs = (GetTime() - start)*1000.0;
         tickAccumulator -= TICK_DT;
         gameTicks++;
@@ -311,6 +314,7 @@ static void DrawWorld(void)
         BuildingsDraw(view);
         UnitsDraw(view, alpha);
         CombatProjectilesDraw(view, alpha);
+        FogDraw(view);
         InputDraw();
     EndMode2D();
 }
@@ -391,7 +395,7 @@ static void DrawOverlay(void)
     UiPanel((Rectangle){ 0, 0, Ui(420.0f), Ui(140.0f) });
     UiLabel(TextFormat("%d FPS", GetFPS()), x, Ui(8.0f), Ui(20.0f), LIME);
     UiLabel(TextFormat("Units: %d   Projectiles: %d", UnitsActiveCount(), CombatProjectileCount()), x, Ui(8.0f) + line*1.2f, size, RAYWHITE);
-    UiLabel(TextFormat("Sim tick: %.2f ms", lastTickMs), x, Ui(8.0f) + line*2.2f, size, RAYWHITE);
+    UiLabel(TextFormat("Sim tick: %.2f ms   Fog: %.2f ms", lastTickMs, FogLastUpdateMs()), x, Ui(8.0f) + line*2.2f, size, RAYWHITE);
     UiLabel(TextFormat("Paths queued: %d   Path: %.2f ms", PathQueueLength(), PathLastFrameMs()), x, Ui(8.0f) + line*3.2f, size, RAYWHITE);
     UiLabel(AiDebugLine(), x, Ui(8.0f) + line*4.2f, size, RAYWHITE);
     UiLabel(TextFormat("AI: %s", AiStatus()), x, Ui(8.0f) + line*5.2f, size, GOLD);

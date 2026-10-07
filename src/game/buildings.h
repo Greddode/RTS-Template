@@ -16,6 +16,7 @@ typedef struct Building {
     int          team;
     float        hp;
     float        incomingDamage;  // projectiles already flying at it (see combat.c)
+    bool         seenByPlayer;    // fog of war: the player has seen it, so it's drawn under fog
     int          tx, ty, size;    // top-left tile and size in tiles
 
     // Construction: placed buildings start unfinished; workers build them up.

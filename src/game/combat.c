@@ -39,6 +39,7 @@
 #include "combat.h"
 #include "buildings.h"
 #include "config.h"
+#include "fog.h"
 #include "grid.h"
 #include "map.h"
 #include "units.h"
@@ -73,6 +74,12 @@ static float SearchRadius(const Unit *u)
 static bool TargetAlive(bool isBuilding, int id, unsigned int serial)
 {
     return isBuilding ? BuildingIsAlive(id, serial) : UnitIsAlive(id, serial);
+}
+
+static bool TargetVisible(const Unit *u)
+{
+    if (u->attackTargetIsBuilding) return FogCanSeeRect(u->team, BuildingRect(u->attackTarget));
+    return FogCanSee(u->team, units[u->attackTarget].pos);
 }
 
 static float *TargetIncoming(bool isBuilding, int id)
@@ -151,7 +158,8 @@ Vector2 CombatUnitTick(int id)
     Unit *u = &units[id];
     Vector2 none = { 0 };
 
-    bool alive = TargetAlive(u->attackTargetIsBuilding, u->attackTarget, u->attackTargetSerial);
+    // A target that walked into the fog counts as gone: you can't chase what you can't see.
+    bool alive = TargetAlive(u->attackTargetIsBuilding, u->attackTarget, u->attackTargetSerial) && TargetVisible(u);
     if (!alive || TargetDoomed(u->attackTargetIsBuilding, u->attackTarget))
     {
         // Switch right away (same tick) to the nearest enemy worth attacking.
@@ -282,6 +290,7 @@ void CombatProjectilesDraw(Rectangle view, float alpha)
         if (!p->active) continue;
         Vector2 pos = Vector2Lerp(p->prevPos, p->pos, alpha);
         if (!CheckCollisionPointRec(pos, view)) continue;   // off screen
+        if (!FogCanSee(PLAYER_TEAM, pos)) continue;          // hidden by fog
         DrawCircleSector(pos, PROJECTILE_RADIUS, 0.0f, 360.0f, 6, PROJECTILE_COLOR);
     }
 }

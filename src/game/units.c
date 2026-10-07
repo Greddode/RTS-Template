@@ -33,6 +33,7 @@
 #include "buildings.h"
 #include "combat.h"
 #include "economy.h"
+#include "fog.h"
 #include "grid.h"
 #include "map.h"
 #include "path.h"
@@ -278,6 +279,7 @@ void UnitsDraw(Rectangle view, float alpha)
     for (int k = 0; k < count; k++)
     {
         const Unit *u = &units[visible[k]];
+        if (u->team != PLAYER_TEAM && !FogCanSee(PLAYER_TEAM, u->pos)) continue;   // hidden by fog
         Vector2 p = Vector2Lerp(u->prevPos, u->pos, alpha);
 
         if (u->selected) DrawCircleSector(p, u->radius + 2.0f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, UNIT_SELECTED_COLOR);

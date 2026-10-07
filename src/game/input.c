@@ -25,6 +25,7 @@
 #include "buildings.h"
 #include "camera.h"
 #include "economy.h"
+#include "fog.h"
 #include "grid.h"
 #include "ui.h"
 #include "units.h"
@@ -150,20 +151,23 @@ static void SelectInBox(Rectangle box)
     }
 }
 
-// The closest unit of `team` under the cursor, or -1.
+// The closest unit of `team` under the cursor, or -1. Uses its own buffer:
+// callers often hold the selection in `found` while asking this.
 static int UnitAtPoint(Vector2 point, int team)
 {
+    static int near[64];
     float reach = UNIT_RADIUS + 2.0f;   // a little forgiveness around small units
     Rectangle area = { point.x - reach, point.y - reach, reach*2.0f, reach*2.0f };
-    int count = GridQuery(area, found, MAX_UNITS);
+    int count = GridQuery(area, near, 64);
 
     int best = -1;
     float bestDist = reach;
     for (int k = 0; k < count; k++)
     {
-        if (units[found[k]].team != team) continue;
-        float d = Vector2Distance(units[found[k]].pos, point);
-        if (d <= bestDist) { best = found[k]; bestDist = d; }
+        if (units[near[k]].team != team) continue;
+        if (team != PLAYER_TEAM && !FogCanSee(PLAYER_TEAM, units[near[k]].pos)) continue;   // hidden by fog
+        float d = Vector2Distance(units[near[k]].pos, point);
+        if (d <= bestDist) { best = near[k]; bestDist = d; }
     }
     return best;
 }
@@ -173,6 +177,7 @@ static void ClickSelect(Vector2 point)
     int unit = UnitAtPoint(point, PLAYER_TEAM);
     int building = BuildingAt(point);
     int node = EconomyNodeAt(point);
+    if (node != -1 && !FogExplored(PLAYER_TEAM, goldNodes[node].pos)) node = -1;   // never seen
 
     if (unit != -1) { selBuilding = -1; selNode = -1; SelectUnit(unit); }
     else if (building != -1 && buildings[building].team == PLAYER_TEAM)
@@ -216,9 +221,11 @@ static void OrderSelected(Vector2 point)
 
     int enemy = UnitAtPoint(point, AI_TEAM);
     int building = BuildingAt(point);
-    bool enemyBuilding = (building != -1 && buildings[building].team != PLAYER_TEAM);
+    bool enemyBuilding = (building != -1 && buildings[building].team != PLAYER_TEAM && FogCanSeeRect(PLAYER_TEAM, BuildingRect(building)));
+    if (building != -1 && buildings[building].team != PLAYER_TEAM && !enemyBuilding) building = -1;   // in fog: just ground
     bool unfinished = (building != -1 && !enemyBuilding && buildings[building].constructing);
     int node = EconomyNodeAt(point);
+    if (node != -1 && !FogExplored(PLAYER_TEAM, goldNodes[node].pos)) node = -1;   // never seen
 
     if (enemy != -1 || enemyBuilding)
     {

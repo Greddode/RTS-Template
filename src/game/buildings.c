@@ -28,6 +28,7 @@
 
 #include "buildings.h"
 #include "economy.h"
+#include "fog.h"
 #include "grid.h"
 #include "map.h"
 #include "units.h"
@@ -107,6 +108,7 @@ int BuildingsFindNearestEnemy(Vector2 pos, float maxDist, int team)
         const Building *b = &buildings[i];
         if (!b->active || b->team == team) continue;
         if (b->hp <= b->incomingDamage) continue;   // doomed: don't waste attacks
+        if (!FogCanSeeRect(team, BuildingRect(i))) continue;   // hidden by fog
         float d = BuildingDistance(i, pos);
         if (d <= bestDist) { bestDist = d; best = i; }
     }
@@ -370,6 +372,8 @@ void BuildingsDraw(Rectangle view)
         if (!b->active) continue;
         Rectangle r = BuildingRect(i);
         if (!CheckCollisionRecs(r, view)) continue;   // off screen
+        // Fog: enemy buildings show while visible, or (dimmed by the fog) once seen.
+        if (b->team != PLAYER_TEAM && !b->seenByPlayer && !FogCanSeeRect(PLAYER_TEAM, r)) continue;
 
         BuildingsDrawShape(b->team, r, b->constructing);
 

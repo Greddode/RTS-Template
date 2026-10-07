@@ -15,6 +15,7 @@
 #include "economy.h"
 #include "buildings.h"
 #include "config.h"
+#include "fog.h"
 #include "map.h"
 #include "units.h"
 #include "ui.h"
@@ -214,6 +215,7 @@ void EconomyDrawNodes(Rectangle view)
     {
         const GoldNode *n = &goldNodes[i];
         if (!n->active || !CheckCollisionPointRec(n->pos, view)) continue;
+        if (!FogExplored(PLAYER_TEAM, n->pos)) continue;   // never seen: hidden
         EconomyDrawNode(n->pos, n->amount);
     }
 }

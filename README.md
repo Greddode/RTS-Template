@@ -106,6 +106,18 @@ Every number (thresholds, distances, caps, timings) is a named constant in the *
 block of `config.h`. The debug overlay (top left) shows the AI's gold, workers (have/target),
 bases, and what it's currently trying to do.
 
+## Fog of war
+
+Each team sees only what's near its units and buildings: **black** = never seen, **dimmed** =
+seen before (terrain, gold and enemy buildings you saw are remembered, units aren't), **full
+colour** = in sight right now. Each unit and building type has a `sight` (in tiles) in the stats
+tables (defaults `UNIT_SIGHT` / `BUILDING_SIGHT` in `config.h`).
+
+You can't see, click or auto-target enemies under fog, and units stop chasing a target that goes
+into it. `AI_SEES_THROUGH_FOG` (default 1) lets the AI ignore fog so it isn't crippled.
+`FOG_OF_WAR_ENABLED` turns fog off entirely, and the pause menu has a **Fog of war: On/Off**
+button. The map editor never shows fog.
+
 ## Winning and losing
 
 A side with no buildings left (finished or unfinished) loses. The check runs once per second,
@@ -137,7 +149,7 @@ generated from `CONTROLS` and the key bindings in `config.h`; this table mirrors
 | M / R (Barracks selected) | Train Melee (75) / Ranged (100); queue up to 5 |
 | Click a queue icon (building selected) | Cancel that unit, gold refunded (destroying the building loses its queue) |
 | B / K (workers selected) | Build a Base (400) / Barracks (150): a ghost follows the mouse, green = OK, red = blocked; left click places, right click / Esc / the key again cancels |
-| Esc | Cancel a pending attack-move or building placement; otherwise open the pause menu |
+| Esc | Cancel a pending attack-move or building placement; otherwise open the pause menu (Resume, Fog of war on/off, Controls, Main Menu, Exit) |
 | F1 | Debug: spawn a wave of 20 enemies |
 | F2 | Map editor on the current map (F2 / Exit returns to the paused game) |
 | Ctrl+Z (editor) | Undo tile painting |
@@ -168,6 +180,7 @@ and `src/editor/` for the editor.
 | `game/grid.c` | Spatial grid for nearby-unit queries |
 | `game/path.c` | A* pathfinding: request queue, per-frame time budget, path smoothing; walkable regions ("can I get there?") |
 | `game/input.c` | Selection list (units, building, gold node), orders, hotkeys, building placement ghost |
+| `game/fog.c` | Fog of war: per-team visibility grid, recomputed 5× a second, one batched overlay pass |
 | `game/combat.c` | Attacking, chasing, auto-targeting (aggro), projectile pool |
 | `game/ai.c` | Enemy AI: trains workers to a per-node target, builds a Barracks, expands to new gold, trains its army, sends idle units at the player |
 | `game/economy.c` | Gold per team, gold node pool, worker mining loop, gold HUD (top right) |

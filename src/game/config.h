@@ -16,6 +16,12 @@
 #define PLAYER_TEAM 0
 #define AI_TEAM     1
 
+// Sight: how far (in tiles) a unit or building reveals the fog of war around
+// it. These are the defaults the tables below use; give a row its own number
+// to change one type.
+#define UNIT_SIGHT     7
+#define BUILDING_SIGHT 8
+
 // Building types come first: units say where they're trained.
 // To add a building: add it to the enum and give it a row in BUILDING_STATS.
 // If it has a cost and a hotkey, workers can build it (it appears in the
@@ -30,12 +36,13 @@ typedef struct BuildingStats {
     float       buildTime;   // seconds for one worker
     int         hotkey;      // build hotkey (workers selected); 0 = none
     bool        dropOff;     // workers can bring gold here
+    int         sight;       // fog of war: tiles it reveals around it
 } BuildingStats;
 
 static const BuildingStats BUILDING_STATS[BUILDING_TYPE_COUNT] = {
-    //                      name        hp       size  cost  buildTime  hotkey  dropOff
-    [BUILDING_BASE]     = { "Base",     1500.0f, 3,    400,  40.0f,     KEY_B,  true  },
-    [BUILDING_BARRACKS] = { "Barracks",  900.0f, 2,    150,  25.0f,     KEY_K,  false },
+    //                      name        hp       size  cost  buildTime  hotkey  dropOff  sight
+    [BUILDING_BASE]     = { "Base",     1500.0f, 3,    400,  40.0f,     KEY_B,  true,    BUILDING_SIGHT },
+    [BUILDING_BARRACKS] = { "Barracks",  900.0f, 2,    150,  25.0f,     KEY_K,  false,   BUILDING_SIGHT },
 };
 
 // Unit types and their stats. To add a type: add it to the enum, give it a row
@@ -54,19 +61,27 @@ typedef struct UnitStats {
     float speed;      // world pixels per second
     int   cost;       // gold to train
     float trainTime;  // seconds to train
+    int   sight;      // fog of war: tiles it reveals around it
 } UnitStats;
 
 static const UnitStats UNIT_STATS[UNIT_TYPE_COUNT] = {
-    //                 name      trainedAt          hotkey  hp      damage  range   cooldown  speed   cost  trainTime
-    [UNIT_MELEE]  = { "Melee",  BUILDING_BARRACKS, KEY_M,  120.0f, 12.0f,  16.0f,  0.8f,     75.0f,  75,   6.0f },
-    [UNIT_RANGED] = { "Ranged", BUILDING_BARRACKS, KEY_R,   70.0f,  9.0f, 120.0f,  1.2f,     65.0f,  100,  7.0f },
-    [UNIT_WORKER] = { "Worker", BUILDING_BASE,     KEY_W,   40.0f,  4.0f,  16.0f,  1.0f,     70.0f,  50,   5.0f },
+    //                 name      trainedAt          hotkey  hp      damage  range   cooldown  speed   cost  trainTime  sight
+    [UNIT_MELEE]  = { "Melee",  BUILDING_BARRACKS, KEY_M,  120.0f, 12.0f,  16.0f,  0.8f,     75.0f,  75,   6.0f,      UNIT_SIGHT },
+    [UNIT_RANGED] = { "Ranged", BUILDING_BARRACKS, KEY_R,   70.0f,  9.0f, 120.0f,  1.2f,     65.0f,  100,  7.0f,      UNIT_SIGHT },
+    [UNIT_WORKER] = { "Worker", BUILDING_BASE,     KEY_W,   40.0f,  4.0f,  16.0f,  1.0f,     70.0f,  50,   5.0f,      UNIT_SIGHT },
 };
 
 // Auto-targeting leash: an idle unit that starts chasing an enemy on its own
 // gives up once it's this far from where it was standing, and walks back.
 // (Player / AI orders and attack-move aren't leashed.)
 #define COMBAT_LEASH_TILES 6
+
+// Fog of war (fog.c).
+#define FOG_OF_WAR_ENABLED  1     // 0: everything always visible (also a toggle in the pause menu)
+#define AI_SEES_THROUGH_FOG 1     // 1: the AI ignores fog (so it isn't crippled); 0: same rules as the player
+#define FOG_UPDATE_TICKS    6     // recompute visibility every 6 sim ticks (5x per second)
+#define FOG_MAX_SIGHT       16    // largest sight radius allowed in the tables (tiles)
+#define FOG_EXPLORED_ALPHA  150   // darkness of explored-but-not-visible tiles (0..255); unseen is black
 
 // Game states (main.c switches between them).
 typedef enum { STATE_MENU, STATE_PLAYING, STATE_PAUSED, STATE_VICTORY, STATE_DEFEAT, STATE_EDITOR } GameState;
