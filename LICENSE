@@ -1,16 +1,91 @@
-﻿Copyright (c) 2021-2026 Ramon Santamaria (@raysan5)
+RTS Kit Licence
+Version 1.0.0
 
-This software is provided "as-is", without any express or implied warranty. In no event 
-will the authors be held liable for any damages arising from the use of this software.
+Copyright (c) 2026 [YOUR NAME OR STUDIO NAME]. All rights reserved except as
+granted below.
 
-Permission is granted to anyone to use this software for any purpose, including commercial 
-applications, and to alter it and redistribute it freely, subject to the following restrictions:
+By downloading, copying, or using the source code and assets in this package
+(the "Kit"), you agree to these terms.
 
-  1. The origin of this software must not be misrepresented; you must not claim that you 
-  wrote the original software. If you use this software in a product, an acknowledgment 
-  in the product documentation would be appreciated but is not required.
+1. WHAT YOU MAY DO
 
-  2. Altered source versions must be plainly marked as such, and must not be misrepresented
-  as being the original software.
+   You may, royalty-free and without crediting the author:
 
-  3. This notice may not be removed or altered from any source distribution.
+   a) Use, read, and modify the Kit's source code, maps, and included
+      placeholder art.
+   b) Build the Kit, or a game made from it, and sell or give away the
+      resulting compiled programs and web builds (for example on itch.io,
+      Steam, or your own site), including for commercial purposes.
+   c) Use the Kit in as many of your own projects as you like.
+   d) Let the people who work with you on your projects (employees,
+      contractors, and teammates) use the Kit for those projects, as long as
+      they do not keep a copy for other purposes.
+
+   Credit is not required, but is appreciated.
+
+2. WHAT YOU MAY NOT DO
+
+   a) Do not sell, resell, share, publish, or give away the Kit's source code
+      or assets themselves, either as-is or modified. This includes posting
+      them in a public repository, a file-sharing site, or a torrent.
+   b) Do not include the Kit, or a modified version of it, in another
+      product that is itself a source-code kit, template, engine, tutorial
+      package, or asset pack, whether free or paid.
+   c) Do not sublicense the Kit or claim that you wrote it.
+   d) Do not use the Kit's name or the author's name to suggest endorsement of
+      your product.
+
+   Games and programs you build from the Kit (compiled or web builds) are not
+   the Kit, and may be distributed freely under section 1b, provided they do
+   not include the Kit's source code.
+
+3. THE FREE WEB DEMO
+
+   The free web demo of the Kit, as published by the author, may be played and
+   shared freely, but this does not give anyone the right to the source code.
+
+4. THIRD-PARTY SOFTWARE
+
+   The Kit uses raylib and other third-party software, listed with their
+   licences in THIRD_PARTY.md. That software remains under its own licences,
+   not these terms. You must follow those licences when you distribute a game
+   built with the Kit (for example, by keeping their copyright notices).
+
+5. ART
+
+   The art included in the Kit is placeholder art, made by the author. You may
+   use it as part of your games under section 1b. Art you add yourself, or
+   obtain from others, stays under its own licence, and you are responsible
+   for following it.
+
+6. NO WARRANTY
+
+   THE KIT IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+7. LIMIT OF LIABILITY
+
+   IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING
+   FROM, OUT OF, OR IN CONNECTION WITH THE KIT OR ITS USE. THE AUTHOR'S TOTAL
+   LIABILITY IS LIMITED TO THE AMOUNT YOU PAID FOR THE KIT.
+
+8. ENDING OF THIS LICENCE
+
+   If you break these terms, this licence ends automatically. You must then
+   stop using the Kit and delete your copies of its source code. Games you
+   built and released before that point may stay available, unless the breach
+   was a breach of section 2.
+
+9. GENERAL
+
+   a) This licence is the whole agreement between you and the author about
+      the Kit.
+   b) If a part of it can't be enforced, the rest still applies.
+   c) It is governed by the laws of [YOUR STATE, e.g. the State of Texas,
+      USA].
+   d) The author may publish later versions of the Kit under different terms.
+      The terms you received with a copy stay in force for that copy.
+
+Contact: [YOUR EMAIL OR ITCH.IO PAGE]

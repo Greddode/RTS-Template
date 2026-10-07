@@ -164,8 +164,10 @@ Every 2 seconds the AI:
 
 1. **Barracks:** once it has 3 workers and 150 gold, one worker builds a Barracks near its base.
    If gold piles up past 600 while every Barracks has a full queue, it builds another (up to 3).
-   **Archery Range:** once a Barracks is finished, it builds one Archery Range (rebuilt if
-   destroyed), pausing army training while it saves up for it.
+   **Tech buildings:** once a Barracks is finished, it builds one of each building in
+   `AI_TECH_ORDER` (Archery Range, then Academy), each after the one before is finished, rebuilt
+   if destroyed. It pauses army training while it saves up for the next one, and uses any it was
+   given by the map file.
 2. **Workers:** each base aims for **8 workers per reachable gold node** near it (at most **16**),
    training at the base that needs them most. When every base is saturated it stops, and the
    gold goes into the army.
@@ -176,9 +178,23 @@ Every 2 seconds the AI:
    time, at most 3 bases. If the builder dies, the site is cancelled (refunded) and that node
    isn't tried again.
 4. **Army:** idle workers go to the near node with the fewest workers; combat units attack the
-   nearest player unit or building. Every 5 seconds each Barracks with room queues a Melee unit
-   and the Archery Range an Archer. It doesn't build an Academy or train Knights, Medics, Mages or Scouts yet
-   (army composition comes later).
+   nearest player unit or building (Medics follow along and heal; Mages hold fire while their
+   own units are in the splash). Every 5 seconds it queues units by the **army mix**,
+   `AI_ARMY_MIX` in `config.h`:
+
+   | Type | Share | Cap (alive) |
+   |---|---|---|
+   | Melee | 4 | |
+   | Knight | 2 | |
+   | Archer | 3 | |
+   | Mage | 1 | |
+   | Scout | 1 | 2 |
+   | Medic | 1 | 4 |
+
+   Each time it picks the type furthest below its share (counting units alive and queued), at a
+   building that trains it and has room in its queue (2 per building), until the queues are full.
+   If it can't afford that type yet, it stops and saves for it instead of buying something
+   cheaper. Change the shares to change its style. A new unit type is used once it has a row here.
 
 Every number (thresholds, distances, caps, timings) is a named constant in the **AI tuning**
 block of `config.h`. The debug overlay (**F3**, top left) shows the AI's gold, workers
@@ -558,11 +574,10 @@ running on the same machine lower the uncapped numbers a lot. Press F3 to see th
 
 - **No multiplayer** (no network or hot-seat play) and **no saving or loading a game** in progress.
 - **One computer opponent** (team 1), in 1 vs 1 games only.
-- **The AI only trains Workers, Melee and Archers**, and only builds Bases, Barracks and an
-  Archery Range. It never makes Knights, Medics, Mages or Scouts, or an Academy, and has
-  one fixed plan (no difficulty levels). By default it sees through the fog (`AI_SEES_THROUGH_FOG`).
+- **The AI has one fixed plan** (no difficulty levels, no reaction to what you build): a fixed
+  army mix and build order. By default it sees through the fog (`AI_SEES_THROUGH_FOG`).
 - **Balance is rough.** In equal-gold fights Melee beats every other type, and in AI vs AI games
-  the map's second side won 4 of 5 maps. On the **Random** map the player starts with 20 soldiers
+  one side of the map won 4 of 5. On the **Random** map the player starts with 20 soldiers
   and the AI with none, which makes it easy. See [Balance (measured)](#balance-measured) below.
 - **Destroyed buildings you can't see simply disappear.** Remembered enemy buildings stay on the
   map until you look again, but one destroyed out of sight vanishes instead of leaving a "ghost".
@@ -586,7 +601,9 @@ Equal-gold fights (1,500 gold each, two groups walking into each other):
 | Mage vs Archer | Mage wins, keeps 86% |
 | Knight vs Mage | Knight wins, keeps 62% |
 
-AI vs AI (the same AI on both sides, fog off) ends in 4–10 minutes. Change the numbers in
+AI vs AI (the same AI on both sides, fog off, starting soldiers removed) ends in 4–10 minutes,
+and both sides train all seven unit types on every map with an economy. Which side wins depends
+on the map: side 0 won 4 of 5. Against a player who does nothing, the AI wins in 1–4 minutes. Change the numbers in
 `UNIT_STATS` (`config.h`); every number above can be re-measured after a change.
 
 ## Releasing

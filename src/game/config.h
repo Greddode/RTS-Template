@@ -207,8 +207,31 @@ static const ControlInfo CONTROLS[] = {
 #define AI_SAVE_FOR_EXPANSION   1               // 1: pause combat training while saving for an expansion
 #define AI_MAX_BASES            3               // cap on bases (finished or being built)
 #define AI_MAX_FAILED_NODES     16              // nodes it gave up expanding to (builder died) are remembered
-#define AI_BARRACKS_QUEUE       2               // combat units queued per Barracks; "full" means this many
+#define AI_BARRACKS_QUEUE       2               // combat units queued per production building; "full" means this many
 #define AI_EXTRA_BARRACKS_GOLD  600             // more gold banked than this, every Barracks full: build another
 #define AI_MAX_BARRACKS         3               // cap on Barracks (finished or being built)
+
+// Tech buildings: after its first Barracks the AI builds one of each, in this order (each once
+// the one before is finished, and only when BuildingsCanBuild() allows it), and rebuilds them if
+// destroyed. Army training pauses while it saves up for the next one.
+static const BuildingType AI_TECH_ORDER[] = { BUILDING_ARCHERY_RANGE, BUILDING_ACADEMY };
+#define AI_TECH_COUNT ((int)(sizeof(AI_TECH_ORDER)/sizeof(AI_TECH_ORDER[0])))
+
+// Army mix: at each production building the AI trains the unit type (of those trained there)
+// that is furthest below its share of the army, counting units alive and queued. maxAlive caps
+// a type (0 = no cap). Types not listed are never trained by the AI (Workers are handled
+// separately). Example: 4 Melee, 2 Knights, 3 Archers, 1 Mage per 10 fighters; at most
+// 2 Scouts and 4 Medics.
+typedef struct AiArmyShare { UnitType type; int share; int maxAlive; } AiArmyShare;
+static const AiArmyShare AI_ARMY_MIX[] = {
+    //  type          share  maxAlive
+    { UNIT_MELEE,     4,     0 },
+    { UNIT_KNIGHT,    2,     0 },
+    { UNIT_ARCHER,    3,     0 },
+    { UNIT_MAGE,      1,     0 },
+    { UNIT_SCOUT,     1,     2 },
+    { UNIT_MEDIC,     1,     4 },
+};
+#define AI_ARMY_MIX_COUNT ((int)(sizeof(AI_ARMY_MIX)/sizeof(AI_ARMY_MIX[0])))
 
 #endif

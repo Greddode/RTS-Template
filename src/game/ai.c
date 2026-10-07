@@ -6,9 +6,10 @@
 //      the builder dies; rebuilt if destroyed). If gold piles up past
 //      AI_EXTRA_BARRACKS_GOLD while every Barracks has a full queue, it builds
 //      another, up to AI_MAX_BARRACKS.
-//   1b. Archery Range: once a Barracks is finished, one worker builds one
-//      Archery Range (rebuilt if destroyed). Combat training waits while
-//      it saves up for it.
+//   1b. Tech: once a Barracks is finished, it builds one of each building
+//      in AI_TECH_ORDER (Archery Range, then Academy), each after the one
+//      before is finished, rebuilt if destroyed. Combat training waits while
+//      it saves up for the next one. Ones a map file gave it are used too.
 //   2. Workers: each finished drop-off base wants AI_WORKERS_PER_NODE workers
 //      per reachable gold node near it (at most AI_MAX_WORKERS_PER_BASE). The
 //      base that's furthest below its target trains one, if the AI can pay.
@@ -25,8 +26,10 @@
 //   4. Idle units: workers go to the gold node near their base with the
 //      fewest workers on it; combat units attack the nearest player unit (or
 //      building, or march on the player's base).
-// Separately, every AI_TRAIN_TICKS each Barracks with room queues a Melee
-// unit and the Archery Range an Archer. (Knights aren't trained yet.)
+// Separately, every AI_TRAIN_TICKS it queues combat units: each time the type
+// furthest below its share in AI_ARMY_MIX (army alive + queued), at a building
+// that trains it and has room, until the queues are full or the gold runs out
+// (then it saves for that type).
 //
 // "Reachable" uses PathRegion(): a flood fill of the walkable tiles, redone
 // every think, so it answers "could pathfinding get there?" instantly.
@@ -51,9 +54,9 @@ static int          thinkCountdown, trainCountdown, expandCountdown;
 static int          barracksSlot[AI_MAX_BARRACKS];     // our Barracks: slots...
 static unsigned int barracksSerial[AI_MAX_BARRACKS];   // ...and serials
 static int          barracksCount = 0;
-static int          rangeSlot = -1;         // our Archery Range: slot...
-static unsigned int rangeSerial;            // ...and serial
-static bool         savingForRange = false;
+static int          techSlot[AI_TECH_COUNT];     // our tech buildings (AI_TECH_ORDER): slots...
+static unsigned int techSerial[AI_TECH_COUNT];   // ...and serials
+static bool         savingForTech = false;
 
 // Expansion in progress (one at a time).
 static bool         expanding = false, savingForExpansion = false;
@@ -66,7 +69,7 @@ static int          failedCount = 0;
 static int  homeRegion;                     // the walkable area our base stands in
 static int  gatherers[MAX_GOLD_NODES];      // our workers mining each node
 static int  workerCount, workerTarget, baseCount;
-static char barracksNote[64], rangeNote[64], workerNote[64], expandNote[96];
+static char barracksNote[64], techNote[64], workerNote[64], expandNote[96];
 
 // Per-think cache: grid cell -> nearest player unit found from it.
 static int          cellTarget[GRID_W*GRID_H];
@@ -244,7 +247,7 @@ static void BarracksTick(void)
     }
 }
 
-// --- 1b. Archery Range --------------------------------------------------------------
+// --- 1b. Tech buildings --------------------------------------------------------------
 
 static bool HaveFinishedBarracks(void)
 {
@@ -252,39 +255,65 @@ static bool HaveFinishedBarracks(void)
     return false;
 }
 
-static void RangeTick(void)
+// One of our buildings of this type (a finished one if there is one), or -1.
+static int FindOwn(BuildingType type)
 {
-    rangeNote[0] = '\0';
-    savingForRange = false;
-    bool alive = BuildingIsAlive(rangeSlot, rangeSerial);
-    if (alive && !buildings[rangeSlot].constructing) return;   // have one
-    if (!alive && !HaveFinishedBarracks()) return;              // not yet: the Barracks comes first
+    int found = -1;
+    for (int b = 0; b < MAX_BUILDINGS; b++)
+    {
+        const Building *bd = &buildings[b];
+        if (!bd->active || bd->team != AI_TEAM || bd->type != type) continue;
+        if (!bd->constructing) return b;
+        found = b;
+    }
+    return found;
+}
+
+static void TechTick(void)
+{
+    techNote[0] = '\0';
+    savingForTech = false;
+    if (!HaveFinishedBarracks()) return;   // the Barracks comes first
     int anchor = AnchorBase();
     if (anchor == -1) return;
 
-    bool beingBuilt;
-    int freeWorker;
-    ScanBuilders(alive ? rangeSlot : -1, &beingBuilt, &freeWorker);
-    if (alive)   // being built: make sure somebody is on it
+    for (int k = 0; k < AI_TECH_COUNT; k++)
     {
-        Note(rangeNote, sizeof(rangeNote), "Building an Archery Range (%d%%)", (int)(BuildingBuildProgress(rangeSlot)*100));
-        if (!beingBuilt && freeWorker != -1) BuildingsOrderConstruct(&freeWorker, 1, rangeSlot);
-        return;
-    }
-    if (freeWorker == -1) return;
+        BuildingType type = AI_TECH_ORDER[k];
+        const char *name = BUILDING_STATS[type].name;
+        if (!BuildingIsAlive(techSlot[k], techSerial[k]))   // lost, or never had one: maybe we own one anyway
+        {
+            techSlot[k] = FindOwn(type);
+            if (techSlot[k] != -1) techSerial[k] = buildings[techSlot[k]].serial;
+        }
+        bool alive = BuildingIsAlive(techSlot[k], techSerial[k]);
+        if (alive && !buildings[techSlot[k]].constructing) continue;   // have it: next one
 
-    int cost = BUILDING_STATS[BUILDING_ARCHERY_RANGE].cost;
-    if (EconomyGold(AI_TEAM) < cost)
-    {
-        savingForRange = true;
-        Note(rangeNote, sizeof(rangeNote), "Saving for an Archery Range (%d/%d)", EconomyGold(AI_TEAM), cost);
-        return;
+        bool beingBuilt;
+        int freeWorker;
+        ScanBuilders(alive ? techSlot[k] : -1, &beingBuilt, &freeWorker);
+        if (alive)   // being built: make sure somebody is on it
+        {
+            Note(techNote, sizeof(techNote), "Building %s (%d%%)", name, (int)(BuildingBuildProgress(techSlot[k])*100));
+            if (!beingBuilt && freeWorker != -1) BuildingsOrderConstruct(&freeWorker, 1, techSlot[k]);
+            return;
+        }
+        if (freeWorker == -1 || !BuildingsCanBuild(AI_TEAM, type)) return;
+
+        int cost = BUILDING_STATS[type].cost;
+        if (EconomyGold(AI_TEAM) < cost)
+        {
+            savingForTech = true;
+            Note(techNote, sizeof(techNote), "Saving for %s (%d/%d)", name, EconomyGold(AI_TEAM), cost);
+            return;
+        }
+        int site = StartSite(type, freeWorker, anchor);
+        if (site == -1) return;
+        techSlot[k] = site;
+        techSerial[k] = buildings[site].serial;
+        Note(techNote, sizeof(techNote), "Building %s", name);
+        return;   // one at a time
     }
-    int site = StartSite(BUILDING_ARCHERY_RANGE, freeWorker, anchor);
-    if (site == -1) return;
-    rangeSlot = site;
-    rangeSerial = buildings[site].serial;
-    Note(rangeNote, sizeof(rangeNote), "Building an Archery Range");
 }
 
 // --- 2. Workers -----------------------------------------------------------------------
@@ -473,21 +502,51 @@ static void ExpandTick(void)
 
 // --- Combat units -----------------------------------------------------------------------
 
-// Queue one unit at a finished building with room. False if out of gold.
-static bool TrainAt(int b, unsigned int serial, UnitType type)
+// One of our finished buildings of this type with room in its queue, or -1.
+static int ProductionBuilding(BuildingType type)
 {
-    if (!BuildingIsAlive(b, serial) || buildings[b].constructing || buildings[b].queueCount >= AI_BARRACKS_QUEUE) return true;
-    return BuildingQueueTrain(b, type);
+    for (int b = 0; b < MAX_BUILDINGS; b++)
+    {
+        const Building *bd = &buildings[b];
+        if (bd->active && bd->team == AI_TEAM && bd->type == type && !bd->constructing && bd->queueCount < AI_BARRACKS_QUEUE) return b;
+    }
+    return -1;
 }
 
 static void TrainTick(void)
 {
     if (--trainCountdown > 0) return;
     trainCountdown = AI_TRAIN_TICKS;
-    if (savingForExpansion || savingForRange) return;   // gold is going into a building
-    if (!TrainAt(rangeSlot, rangeSerial, UNIT_ARCHER)) return;   // out of gold
-    for (int k = 0; k < barracksCount; k++)   // each Barracks with room gets one unit
-        if (!TrainAt(barracksSlot[k], barracksSerial[k], UNIT_MELEE)) return;
+    if (savingForExpansion || savingForTech) return;   // gold is going into a building
+
+    // Our army by type: alive plus queued. A pass over the pool every 5 s is
+    // cheap (it isn't a "who's nearby" search).
+    int have[UNIT_TYPE_COUNT] = { 0 };
+    for (int i = 0; i < MAX_UNITS; i++) if (units[i].active && units[i].team == AI_TEAM) have[units[i].type]++;
+    for (int b = 0; b < MAX_BUILDINGS; b++)
+        if (buildings[b].active && buildings[b].team == AI_TEAM)
+            for (int q = 0; q < buildings[b].queueCount; q++) have[buildings[b].queue[q]]++;
+
+    // Again and again: the type furthest below its share in AI_ARMY_MIX (not at
+    // its cap, and with a building that can take it). If it can't be paid for,
+    // stop: the gold is saved for it rather than spent on something cheaper.
+    for (;;)
+    {
+        int bestType = -1, bestBuilding = -1;
+        float bestRatio = 0.0f;
+        for (int m = 0; m < AI_ARMY_MIX_COUNT; m++)
+        {
+            const AiArmyShare *mix = &AI_ARMY_MIX[m];
+            if (mix->share <= 0 || (mix->maxAlive > 0 && have[mix->type] >= mix->maxAlive)) continue;
+            int b = ProductionBuilding(UNIT_STATS[mix->type].trainedAt);
+            if (b == -1) continue;
+            float ratio = have[mix->type]/(float)mix->share;
+            if (bestType == -1 || ratio < bestRatio) { bestType = mix->type; bestBuilding = b; bestRatio = ratio; }
+        }
+        if (bestType == -1) return;                                        // every building is full
+        if (!BuildingQueueTrain(bestBuilding, (UnitType)bestType)) return;   // not enough gold yet
+        have[bestType]++;
+    }
 }
 
 static int NearestPlayerUnit(Vector2 from)
@@ -536,12 +595,12 @@ void AiInit(Vector2 base, Vector2 spawn, int baseBuilding)
     trainCountdown = AI_TRAIN_TICKS;
     expandCountdown = AI_EXPAND_CHECK_TICKS;
     barracksCount = 0;
-    rangeSlot = -1;
-    savingForRange = false;
+    for (int k = 0; k < AI_TECH_COUNT; k++) techSlot[k] = -1;
+    savingForTech = false;
     expanding = savingForExpansion = false;
     failedCount = 0;
     workerCount = workerTarget = baseCount = 0;
-    barracksNote[0] = rangeNote[0] = workerNote[0] = expandNote[0] = '\0';
+    barracksNote[0] = techNote[0] = workerNote[0] = expandNote[0] = '\0';
     if (baseBuilding >= 0) RallyTowardNode(baseBuilding);
 }
 
@@ -558,7 +617,7 @@ void AiTick(void)
     baseCount = CountOurBases();
 
     BarracksTick();
-    RangeTick();
+    TechTick();
     WorkerTick();
     expandCountdown -= AI_THINK_TICKS;
     if (expandCountdown <= 0) { expandCountdown = AI_EXPAND_CHECK_TICKS; ExpandTick(); }
@@ -598,15 +657,16 @@ void AiSpawnWave(int count)
 
 const char *AiDebugLine(void)
 {
-    return TextFormat("AI gold %d  workers %d/%d  bases %d  barracks %d  range %d", EconomyGold(AI_TEAM), workerCount, workerTarget, baseCount, barracksCount,
-                      BuildingIsAlive(rangeSlot, rangeSerial) ? 1 : 0);
+    int tech = 0;
+    for (int k = 0; k < AI_TECH_COUNT; k++) tech += BuildingIsAlive(techSlot[k], techSerial[k]) && !buildings[techSlot[k]].constructing;
+    return TextFormat("AI gold %d  workers %d/%d  bases %d  barracks %d  tech %d/%d", EconomyGold(AI_TEAM), workerCount, workerTarget, baseCount, barracksCount, tech, AI_TECH_COUNT);
 }
 
 const char *AiStatus(void)
 {
     if (expandNote[0]) return expandNote;
     if (barracksNote[0]) return barracksNote;
-    if (rangeNote[0]) return rangeNote;
+    if (techNote[0]) return techNote;
     if (workerNote[0]) return workerNote;
     return "Training army";
 }
