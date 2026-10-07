@@ -216,6 +216,22 @@ Rectangle BuildingFootprint(BuildingType type, Vector2 centre)
     return (Rectangle){ (float)(tx*TILE_SIZE), (float)(ty*TILE_SIZE), (float)(size*TILE_SIZE), (float)(size*TILE_SIZE) };
 }
 
+// Prerequisites: a type with `requires` can be started only while the team
+// owns at least one FINISHED building of that type. Checked when a worker
+// (player or AI) starts one, not when map files or the editor place it.
+// Losing the required building later only stops new ones; existing ones keep working.
+bool BuildingsCanBuild(int team, BuildingType type)
+{
+    BuildingType need = BUILDING_STATS[type].requires;
+    if (need == BUILDING_NONE) return true;
+    for (int i = 0; i < MAX_BUILDINGS; i++)
+    {
+        const Building *b = &buildings[i];
+        if (b->active && b->team == team && b->type == need && !b->constructing) return true;
+    }
+    return false;
+}
+
 bool BuildingCanPlace(BuildingType type, Vector2 centre)
 {
     int tx, ty, size = BUILDING_STATS[type].size;

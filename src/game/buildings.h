@@ -34,6 +34,7 @@ extern Building buildings[MAX_BUILDINGS];
 
 Rectangle BuildingFootprint(BuildingType type, Vector2 centre);    // tiles it would cover, snapped to the grid
 bool BuildingCanPlace(BuildingType type, Vector2 centre);          // open ground, no building or gold node in the way
+bool BuildingsCanBuild(int team, BuildingType type);               // prerequisite met: owns a finished `requires` building
 int  BuildingPlace(BuildingType type, int team, Vector2 centre, bool unfinished);   // index, or -1 if blocked / pool full
 void BuildingDestroy(int id);
 bool BuildingIsAlive(int id, unsigned int serial);

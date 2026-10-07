@@ -25,8 +25,10 @@
 // Building types come first: units say where they're trained.
 // To add a building: add it to the enum and give it a row in BUILDING_STATS.
 // If it has a cost and a hotkey, workers can build it (it appears in the
-// inspector's Build buttons automatically).
-typedef enum { BUILDING_NONE = -1, BUILDING_BASE, BUILDING_BARRACKS, BUILDING_ARCHERY_RANGE, BUILDING_TYPE_COUNT } BuildingType;
+// inspector's Build buttons automatically). `requires`: workers can only start
+// one while the team owns a FINISHED building of that type (BuildingsCanBuild()).
+// Map files and the editor can place anything.
+typedef enum { BUILDING_NONE = -1, BUILDING_BASE, BUILDING_BARRACKS, BUILDING_ARCHERY_RANGE, BUILDING_ACADEMY, BUILDING_TYPE_COUNT } BuildingType;
 
 typedef struct BuildingStats {
     const char *name;
@@ -37,13 +39,15 @@ typedef struct BuildingStats {
     int         hotkey;      // build hotkey (workers selected); 0 = none
     bool        dropOff;     // workers can bring gold here
     int         sight;       // fog of war: tiles it reveals around it
+    BuildingType requires;   // must own a finished one of these first; BUILDING_NONE = nothing
 } BuildingStats;
 
 static const BuildingStats BUILDING_STATS[BUILDING_TYPE_COUNT] = {
-    //                           name             hp       size  cost  buildTime  hotkey  dropOff  sight
-    [BUILDING_BASE]          = { "Base",          1500.0f, 3,    400,  40.0f,     KEY_B,  true,    BUILDING_SIGHT },
-    [BUILDING_BARRACKS]      = { "Barracks",       900.0f, 2,    150,  25.0f,     KEY_K,  false,   BUILDING_SIGHT },
-    [BUILDING_ARCHERY_RANGE] = { "Archery Range",  800.0f, 2,    175,  25.0f,     KEY_R,  false,   BUILDING_SIGHT },
+    //                           name             hp       size  cost  buildTime  hotkey  dropOff  sight           requires
+    [BUILDING_BASE]          = { "Base",          1500.0f, 3,    400,  40.0f,     KEY_B,  true,    BUILDING_SIGHT, BUILDING_NONE     },
+    [BUILDING_BARRACKS]      = { "Barracks",       900.0f, 2,    150,  25.0f,     KEY_K,  false,   BUILDING_SIGHT, BUILDING_NONE     },
+    [BUILDING_ARCHERY_RANGE] = { "Archery Range",  800.0f, 2,    175,  25.0f,     KEY_R,  false,   BUILDING_SIGHT, BUILDING_NONE     },
+    [BUILDING_ACADEMY]       = { "Academy",       1000.0f, 2,    450,  35.0f,     KEY_E,  false,   BUILDING_SIGHT, BUILDING_BARRACKS },
 };
 
 // --- Damage and armor ---------------------------------------------------------------
@@ -73,7 +77,7 @@ static const float DAMAGE_VS_ARMOR[DAMAGE_TYPE_COUNT][ARMOR_TYPE_COUNT] = {
 // in UNIT_STATS, and (optionally) art in assets/sprites/units or a look in
 // UnitsDrawIcon(). `trainedAt` puts a Train button on that building;
 // BUILDING_NONE means it can't be trained.
-typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_TYPE_COUNT } UnitType;
+typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UNIT_TYPE_COUNT } UnitType;
 
 typedef struct UnitStats {
     const char  *name;
@@ -90,14 +94,18 @@ typedef struct UnitStats {
     int   cost;       // gold to train
     float trainTime;  // seconds to train
     int   sight;      // fog of war: tiles it reveals around it
+    bool  canHeal;    // healer (heal.c): heals damaged allies instead of attacking (give it damage 0)
+    float healRate;   // HP per second it gives its target
+    float healRange;  // world pixels from its centre to the target's centre
 } UnitStats;
 
 static const UnitStats UNIT_STATS[UNIT_TYPE_COUNT] = {
-    //                 name      trainedAt               hotkey  hp      damage  damageType     range   cooldown  speed  armor  armorType     cost  trainTime  sight
-    [UNIT_MELEE]  = { "Melee",  BUILDING_BARRACKS,      KEY_M,  120.0f, 12.0f,  DAMAGE_BLUNT,   16.0f, 0.8f,     75.0f, 1.0f,  ARMOR_MEDIUM, 75,   6.0f,      UNIT_SIGHT },
-    [UNIT_ARCHER] = { "Archer", BUILDING_ARCHERY_RANGE, KEY_C,   70.0f,  9.0f,  DAMAGE_PIERCE, 120.0f, 1.2f,     65.0f, 0.0f,  ARMOR_LIGHT,  100,  7.0f,      UNIT_SIGHT },
-    [UNIT_WORKER] = { "Worker", BUILDING_BASE,          KEY_W,   40.0f,  4.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  50,   5.0f,      UNIT_SIGHT },
-    [UNIT_KNIGHT] = { "Knight", BUILDING_BARRACKS,      KEY_N,  300.0f, 18.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     55.0f, 2.0f,  ARMOR_HEAVY,  175,  10.0f,     UNIT_SIGHT },
+    //                 name      trainedAt               hotkey  hp      damage  damageType     range   cooldown  speed  armor  armorType     cost  trainTime  sight       canHeal  healRate  healRange
+    [UNIT_MELEE]  = { "Melee",  BUILDING_BARRACKS,      KEY_M,  120.0f, 12.0f,  DAMAGE_BLUNT,   16.0f, 0.8f,     75.0f, 1.0f,  ARMOR_MEDIUM, 75,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f  },
+    [UNIT_ARCHER] = { "Archer", BUILDING_ARCHERY_RANGE, KEY_C,   70.0f,  9.0f,  DAMAGE_PIERCE, 120.0f, 1.2f,     65.0f, 0.0f,  ARMOR_LIGHT,  100,  7.0f,      UNIT_SIGHT, false,   0.0f,     0.0f  },
+    [UNIT_WORKER] = { "Worker", BUILDING_BASE,          KEY_W,   40.0f,  4.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  50,   5.0f,      UNIT_SIGHT, false,   0.0f,     0.0f  },
+    [UNIT_KNIGHT] = { "Knight", BUILDING_BARRACKS,      KEY_N,  300.0f, 18.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     55.0f, 2.0f,  ARMOR_HEAVY,  175,  10.0f,     UNIT_SIGHT, false,   0.0f,     0.0f  },
+    [UNIT_MEDIC]  = { "Medic",  BUILDING_ACADEMY,       KEY_D,   60.0f,  0.0f,  DAMAGE_PIERCE,   0.0f, 0.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  125,  8.0f,      UNIT_SIGHT, true,    8.0f,     64.0f },
 };
 
 // Auto-targeting leash: an idle unit that starts chasing an enemy on its own

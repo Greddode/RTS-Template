@@ -38,6 +38,7 @@
 #include "fog.h"
 #include "editor.h"
 #include "grid.h"
+#include "heal.h"
 #include "input.h"
 #include "inspector.h"
 #include "map.h"
@@ -318,6 +319,7 @@ static void DrawWorld(void)
         EconomyDrawNodes(view);
         BuildingsDraw(view);
         UnitsDraw(view, alpha);
+        HealDraw(view, alpha);
         CombatProjectilesDraw(view, alpha);
         FogDraw(view);
         InputDraw();

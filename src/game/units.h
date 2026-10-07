@@ -62,6 +62,12 @@ typedef struct Unit {
     unsigned int buildSiteSerial;     // ...and serial
 
     int          orderRetries;        // gather/build: path attempts left before giving up
+
+    // Healing (heal.c) - healers only
+    bool         healing;             // has a patient
+    bool         healOrdered;         // right-clicked: follow this one anywhere until it's full
+    int          healTarget;          // unit slot...
+    unsigned int healTargetSerial;    // ...and serial
 } Unit;
 
 extern Unit units[MAX_UNITS];

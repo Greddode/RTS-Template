@@ -192,6 +192,7 @@ static int StartSite(BuildingType type, int worker, int anchor)
 {
     int cost = BUILDING_STATS[type].cost;
     Vector2 spot;
+    if (!BuildingsCanBuild(AI_TEAM, type)) return -1;   // prerequisite not met
     if (!BuildingsFindSpot(type, BuildingCentre(anchor), &spot)) return -1;
     if (!EconomySpend(AI_TEAM, cost)) return -1;
     int site = BuildingPlace(type, AI_TEAM, spot, true);

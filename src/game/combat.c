@@ -180,6 +180,7 @@ Vector2 CombatUnitTick(int id)
 {
     Unit *u = &units[id];
     Vector2 none = { 0 };
+    if (UNIT_STATS[u->type].damage <= 0.0f) { u->attacking = false; return none; }   // can't attack: never chase
 
     // A target that walked into the fog counts as gone: you can't chase what you can't see.
     bool alive = TargetAlive(u->attackTargetIsBuilding, u->attackTarget, u->attackTargetSerial) && TargetVisible(u);
@@ -260,6 +261,7 @@ void CombatAcquireTick(int id)
 {
     Unit *u = &units[id];
     if (u->type == UNIT_WORKER) return;   // workers only fight when told to
+    if (UNIT_STATS[u->type].damage <= 0.0f) return;   // healers / no attack: never pick a target
     if (--u->acquireTicks > 0) return;
     u->acquireTicks = COMBAT_ACQUIRE_TICKS;
 

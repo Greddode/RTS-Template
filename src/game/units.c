@@ -24,6 +24,10 @@
 // workers ordered to construct by buildings.c (BuildingsWorkerTick). Workers
 // don't auto-attack, so they stay on the job.
 //
+// Healers (heal.c) never take the combat path: when idle or attack-moving
+// they look for damaged allies instead of enemies, and an attack order sends
+// them along as an attack-move. So does any unit with damage 0.
+//
 // Stop drops every order (the unit is idle, so it still auto-attacks).
 // Hold is stop plus `holdPosition`: combat.c then only lets it target enemies
 // already in range, and never chase.
@@ -35,6 +39,7 @@
 #include "economy.h"
 #include "fog.h"
 #include "grid.h"
+#include "heal.h"
 #include "map.h"
 #include "path.h"
 #include "sprites.h"
@@ -48,6 +53,7 @@
 #define AI_COLOR            (Color){ 210, 60, 50, 255 }
 #define ARCHER_DOT_COLOR    (Color){ 40, 30, 20, 255 }   // archers get a dark centre dot
 #define KNIGHT_RING_COLOR   (Color){ 40, 30, 20, 255 }   // knights get a dark ring
+#define MEDIC_CROSS_COLOR   (Color){ 245, 245, 240, 255 } // medics get a white cross
 #define WORKER_MARK_COLOR   (Color){ 235, 235, 225, 255 } // workers get a light square
 #define UNIT_SELECTED_COLOR (Color){ 60, 255, 90, 255 }
 #define HEALTH_BAR_W        14.0f
@@ -233,6 +239,7 @@ Vector2 UnitFollowPath(int id)
 
 void UnitsTick(void)
 {
+    HealBeginTick();
     for (int i = 0; i < MAX_UNITS; i++)
     {
         Unit *u = &units[i];
@@ -243,9 +250,14 @@ void UnitsTick(void)
 
         Vector2 step = { 0 };
         bool gathering = (u->gatherState != GATHER_NONE);
-        bool busy = u->attacking || gathering || u->buildOrder;
-        if (!busy && (!u->moving || u->attackMove)) CombatAcquireTick(i);   // look for enemies
-        if (u->attacking) step = CombatUnitTick(i);   // may kill other units
+        bool busy = u->attacking || gathering || u->buildOrder || u->healing;
+        if (!busy && (!u->moving || u->attackMove))   // look for enemies (or, for healers, damaged allies)
+        {
+            if (UNIT_STATS[u->type].canHeal) HealAcquireTick(i);
+            else CombatAcquireTick(i);
+        }
+        if (u->healing) step = HealUnitTick(i);
+        else if (u->attacking) step = CombatUnitTick(i);   // may kill other units
         else if (gathering) step = EconomyWorkerTick(i);
         else if (u->buildOrder) step = BuildingsWorkerTick(i);
         else if (u->moving) step = UnitFollowPath(i);
@@ -261,7 +273,7 @@ void UnitsTick(void)
 }
 
 // Body in team colour plus a type mark: archer = dark dot, worker = light
-// square, knight = dark ring.
+// square, knight = dark ring, medic = white cross.
 // With art for the type (sprites.c), the art tinted in team colour instead.
 void UnitsDrawIcon(UnitType type, int team, Vector2 p, float radius)
 {
@@ -271,6 +283,12 @@ void UnitsDrawIcon(UnitType type, int team, Vector2 p, float radius)
     DrawCircleSector(p, radius, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, body);
     if (type == UNIT_ARCHER) DrawCircleSector(p, radius*0.4f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, ARCHER_DOT_COLOR);
     if (type == UNIT_KNIGHT) DrawRing(p, radius*0.45f, radius*0.75f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, KNIGHT_RING_COLOR);
+    if (type == UNIT_MEDIC)
+    {
+        float l = radius*1.1f, w = radius*0.4f;
+        DrawRectangleRec((Rectangle){ p.x - l*0.5f, p.y - w*0.5f, l, w }, MEDIC_CROSS_COLOR);
+        DrawRectangleRec((Rectangle){ p.x - w*0.5f, p.y - l*0.5f, w, l }, MEDIC_CROSS_COLOR);
+    }
     if (type == UNIT_WORKER)
     {
         float s = radius*0.9f;
@@ -425,6 +443,7 @@ void UnitsOrderMove(const int *ids, int count, Vector2 dest)
         units[id].gatherState = GATHER_NONE;
         units[id].buildOrder = false;
         units[id].leashed = false;
+        units[id].healing = false;
         UnitMoveTo(id, (k < found) ? spots[spotOrder[k]] : dest);   // more units than open spots: rare
     }
 }
@@ -457,13 +476,25 @@ static void SetAttackTarget(int id, int target, unsigned int serial, bool isBuil
     u->chaseTicks = 0;   // decide how to reach it on its very next tick
 }
 
+// Units that can't attack (healers, damage 0) are given an attack-move to
+// `where` instead: they go along with the army and heal on the way.
+static void NonAttackersAttackMove(const int *ids, int count, Vector2 where)
+{
+    static int movers[MAX_UNITS];
+    int n = 0;
+    for (int k = 0; k < count; k++) if (UNIT_STATS[units[ids[k]].type].damage <= 0.0f) movers[n++] = ids[k];
+    UnitsOrderAttackMove(movers, n, where);
+}
+
 void UnitsOrderAttack(const int *ids, int count, int target)
 {
     for (int k = 0; k < count; k++)
     {
         if (ids[k] == target || units[ids[k]].team == units[target].team) continue;
+        if (UNIT_STATS[units[ids[k]].type].damage <= 0.0f) continue;   // handled below
         SetAttackTarget(ids[k], target, units[target].serial, false);
     }
+    NonAttackersAttackMove(ids, count, units[target].pos);
 }
 
 void UnitsOrderAttackBuilding(const int *ids, int count, int building)
@@ -471,8 +502,10 @@ void UnitsOrderAttackBuilding(const int *ids, int count, int building)
     for (int k = 0; k < count; k++)
     {
         if (units[ids[k]].team == buildings[building].team) continue;
+        if (UNIT_STATS[units[ids[k]].type].damage <= 0.0f) continue;   // handled below
         SetAttackTarget(ids[k], building, buildings[building].serial, true);
     }
+    NonAttackersAttackMove(ids, count, BuildingCentre(building));
 }
 
 void UnitsOrderStop(const int *ids, int count)
@@ -487,6 +520,7 @@ void UnitsOrderStop(const int *ids, int count)
         u->gatherState = GATHER_NONE;
         u->buildOrder = false;
         u->leashed = false;
+        u->healing = false;
     }
 }
 

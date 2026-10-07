@@ -70,7 +70,7 @@ playing (opens the current map; **Exit** or F2 returns to the paused game exactl
 |---|---|
 | Tile brushes (Grass, Dirt, Water, Rock) | Left-click / drag to paint; brush size 1, 3 or 5. Water and rock never paint under an object. **Ctrl+Z** undoes painting (32 steps) |
 | Player / AI | Which team new objects belong to |
-| Base, Barracks, Archery Range, Melee, Archer, Worker, Knight | Click to place; a green/red ghost shows if it fits (same rules as map files) |
+| Base, Barracks, Archery Range, Academy, Melee, Archer, Worker, Knight, Medic | Click to place; a green/red ghost shows if it fits (same rules as map files) |
 | Gold + amount | Click to place a gold node with that amount |
 | Erase object | Click (or drag over) objects to remove them |
 | New map 32 / 64 / 128 | Start again, all grass |
@@ -104,7 +104,8 @@ Every 2 seconds the AI:
    isn't tried again.
 4. **Army:** idle workers go to the near node with the fewest workers; combat units attack the
    nearest player unit or building. Every 5 seconds each Barracks with room queues a Melee unit
-   and the Archery Range an Archer. It doesn't train Knights yet (army composition comes later).
+   and the Archery Range an Archer. It doesn't build an Academy or train Knights or Medics yet
+   (army composition comes later).
 
 Every number (thresholds, distances, caps, timings) is a named constant in the **AI tuning**
 block of `config.h`. The debug overlay (top left) shows the AI's gold, workers (have/target),
@@ -137,8 +138,8 @@ usual coloured shape, so you can replace art one type at a time. Placeholder PNG
 as templates to paint over.
 
 ```
-assets/sprites/units/      melee.png  archer.png  worker.png  knight.png   (names from UNIT_STATS)
-assets/sprites/buildings/  base.png   barracks.png  archery_range.png      (names from BUILDING_STATS)
+assets/sprites/units/      melee.png  archer.png  worker.png  knight.png  medic.png   (names from UNIT_STATS)
+assets/sprites/buildings/  base.png   barracks.png  archery_range.png  academy.png  (names from BUILDING_STATS)
 assets/sprites/tiles/      grass.png  dirt.png  water.png  rock.png  (names from TILE_INFO)
 ```
 
@@ -149,8 +150,8 @@ automatically. Upper/lower case in the file name doesn't matter.
 **How it's drawn:**
 - **Units** are fitted into the unit's circle (12×12 world pixels by default; 32×32 PNGs are
   recommended). Draw them **facing right**: they're mirrored when walking left.
-- **Buildings** are fitted into their footprint (Base 96×96, Barracks and Archery Range 64×64 at
-  32 px per tile).
+- **Buildings** are fitted into their footprint (Base 96×96; Barracks, Archery Range and Academy
+  64×64 at 32 px per tile).
 - Units and buildings keep their PNG's aspect ratio. **Tiles** are stretched to fill one tile
   (32×32) and should tile seamlessly.
 - Units and buildings are **tinted with the team colour**: the tint multiplies the PNG, so paint
@@ -198,6 +199,7 @@ The counter table in `config.h`, row = attacker's damage type, column = target's
 | Melee | 12 Blunt | 1 Medium | Barracks (M) | Cheap front line; good vs Knights |
 | Archer | 9 Pierce | 0 Light | Archery Range (C) | Ranged; arrows bounce off Knights (2.5 per hit) |
 | Knight | 18 Blunt | 2 Heavy | Barracks (N) | Slow, tough, expensive; shrugs off arrows, loses to blunt |
+| Medic | none (heals 8 HP/s) | 0 Light | Academy (D) | Heals damaged allies; see [Buildings that need another, and healers](#buildings-that-need-another-and-healers) |
 | Worker | 4 Blunt | 0 Light | Base (W) | Mines and builds |
 
 Magic is there as an example: no unit uses it yet.
@@ -217,6 +219,32 @@ Magic is there as an example: no unit uses it yet.
 A missing column or row isn't a compile error in C. The missing numbers are 0, so that damage
 would always fall to the 10% minimum. Fill in every cell.
 
+## Buildings that need another, and healers
+
+**Prerequisites.** `BUILDING_STATS` has a `requires` column. The **Academy** (450 gold, the most
+expensive building; hotkey E) requires a **Barracks**: workers can only start one while you own
+at least one *finished* Barracks (`BuildingsCanBuild()` in `buildings.c`, used by the player and
+the AI). Until then its Build button is greyed and says "Academy - Requires Barracks". A selected
+Academy shows "needs: Barracks". Losing your last Barracks stops *new* Academies, but the ones you
+have keep working. Map files and the editor can place anything.
+
+**Healers.** `UNIT_STATS` has `canHeal`, `healRate` (HP per second) and `healRange` (pixels). The
+**Medic** (Academy, 125 gold, hotkey D) has no attack. It heals 8 HP/s within 64 px:
+- **Idle or attack-moving:** finds the nearest damaged ally within 160 px (`HEAL_SEARCH_RADIUS`
+  in `heal.h`), walks into range and heals it every tick, never above max HP. When the ally dies,
+  is full, gets out of reach or goes into fog, the Medic picks the next one in the same tick.
+- **Plain move:** ignores healing (like soldiers ignore enemies). **Hold:** only heals allies
+  already in range, without moving.
+- **Several Medics** spread over several damaged allies. They only share one when there's no other.
+- **Leash:** like soldiers, an idle Medic that walked off to heal goes back to where it stood.
+- **Right click a damaged unit of yours** with Medics selected: they follow and heal it (any
+  distance) until it's full. The rest of the selection gets the normal right-click order.
+- **Attack orders:** a Medic can't attack. Ordered to attack, it attack-moves to the target
+  instead (follows the army, heals on the way). The same goes for any unit with damage 0.
+- A thin green line shows who's healing whom (only where you can see).
+
+`UnitNeedsHealing()` in `heal.c` is the one rule for "damaged": alive and below max HP.
+
 ## Adding a new unit type (walkthrough)
 
 Example: a **Spearman**, a pierce-damage foot soldier with medium armor, trained at the Barracks.
@@ -230,20 +258,21 @@ typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_SPEARMAN,
 **2. Give it a stats row** in `UNIT_STATS` (same file):
 
 ```c
-//                   name        trainedAt          hotkey  hp      damage  damageType     range  cooldown  speed  armor  armorType     cost  trainTime  sight
-[UNIT_SPEARMAN] = { "Spearman", BUILDING_BARRACKS, KEY_P,  100.0f, 10.0f,  DAMAGE_PIERCE, 20.0f, 0.9f,     70.0f, 1.0f,  ARMOR_MEDIUM, 80,   6.0f,      UNIT_SIGHT },
+//                   name        trainedAt          hotkey  hp      damage  damageType     range  cooldown  speed  armor  armorType     cost  trainTime  sight       canHeal  healRate  healRange
+[UNIT_SPEARMAN] = { "Spearman", BUILDING_BARRACKS, KEY_P,  100.0f, 10.0f,  DAMAGE_PIERCE, 20.0f, 0.9f,     70.0f, 1.0f,  ARMOR_MEDIUM, 80,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f  },
 ```
 
 - `name` is used everywhere: inspector, editor button, map files, PNG file name.
 - `trainedAt` puts a Train button on that building (`BUILDING_NONE` = can't be trained).
 - `damageType`, `armor` and `armorType`: see [Damage and armor](#damage-and-armor).
+- `canHeal`, `healRate`, `healRange`: `false, 0, 0` for a fighter (healers: see below).
 - Pick an unused hotkey. If two actions share a key, the console says `HOTKEY CONFLICT` at startup.
 
 **3. Add the art:** save a 32×32 PNG, facing right, as `assets/sprites/units/spearman.png`
 (see [Art (sprites)](#art-sprites)). Without it the Spearman is a plain team-coloured circle; to
 give that shape a mark of its own, add a case to `UnitsDrawIcon()` in `units.c`.
 
-**4. Build and run** (`make run`). The console should say `SPRITES: 12 of 12 PNGs packed`. If
+**4. Build and run** (`make run`). The console should say `SPRITES: 14 of 14 PNGs packed`. If
 it says `no units/spearman.png`, check the file name.
 
 **5. Optional: put Spearmen in a map.** Add a line to a `.map` file (`<unit> <team> <x> <y>`, in tiles):
@@ -259,9 +288,30 @@ the inspector's stats (damage, armor), the Controls page entry, the editor butto
 support, fog sight and the minimap dot. A new **building** works the same way: a row in
 `BUILDING_STATS` gives it a Build button for workers, a hotkey, map-file and editor support.
 
+**Variant: a healer.** A **Priest** is the same five steps with `damage 0`, `canHeal true` and its
+own heal numbers. It then behaves exactly like the Medic (no code):
+
+```c
+[UNIT_PRIEST] = { "Priest", BUILDING_TEMPLE, KEY_I, 50.0f, 0.0f, DAMAGE_MAGIC, 0.0f, 0.0f, 65.0f, 0.0f, ARMOR_LIGHT, 150, 9.0f, UNIT_SIGHT, true, 12.0f, 80.0f },
+```
+
+**Variant: a building that needs another.** A **Temple** that trains the Priest and needs an
+Academy is one enum entry (`BUILDING_TEMPLE`, before `BUILDING_TYPE_COUNT`) plus one row. The last
+column is the prerequisite:
+
+```c
+//                           name       hp       size  cost  buildTime  hotkey  dropOff  sight           requires
+[BUILDING_TEMPLE]        = { "Temple",  900.0f,  2,    300,  30.0f,     KEY_T,  false,   BUILDING_SIGHT, BUILDING_ACADEMY },
+```
+
+Workers get a "Temple - Requires Academy" button until an Academy is finished. The Temple gets
+the Priest's Train button (`trainedAt BUILDING_TEMPLE`), a map keyword (`temple`), an editor
+button and `temple.png` art, all from the row.
+
 **What needs code:**
 - Only `UNIT_ARCHER` fires projectiles (`combat.c`). Any other type hits instantly at its `range`.
 - The AI trains Melee at its Barracks and Archers at its Archery Range (`TrainTick()` in `ai.c`).
+  It never builds a building or trains a unit it isn't told to, so new rows don't change it.
 
 ## Winning and losing
 
@@ -289,14 +339,16 @@ generated from `CONTROLS` and the key bindings in `config.h`; this table mirrors
 | Right click on enemy unit or building | Attack it |
 | Right click on gold (workers selected) | Mine it: workers carry gold to the nearest base and repeat |
 | Right click your unfinished building (workers selected) | Workers help build it |
+| Right click your damaged unit (Medics selected) | Medics follow and heal it until it's full; the rest of the selection moves there |
 | A, then right click | Attack-move: walk there, fighting any enemies met on the way (left click or Esc cancels) |
 | S | Stop: drop all orders (units still fight enemies that come close) |
 | H | Hold position: stay put, only attack enemies already in range |
 | W (Base selected) | Train a Worker (50); queue up to 5 |
 | M / N (Barracks selected) | Train Melee (75) / Knight (175); queue up to 5 |
 | C (Archery Range selected) | Train an Archer (100); queue up to 5 |
+| D (Academy selected) | Train a Medic (125); queue up to 5 |
 | Click a queue icon (building selected) | Cancel that unit, gold refunded (destroying the building loses its queue) |
-| B / K / R (workers selected) | Build a Base (400) / Barracks (150) / Archery Range (175): a ghost follows the mouse, green = OK, red = blocked; left click places, right click / Esc / the key again cancels |
+| B / K / R / E (workers selected) | Build a Base (400) / Barracks (150) / Archery Range (175) / Academy (450, needs a finished Barracks): a ghost follows the mouse, green = OK, red = blocked; left click places, right click / Esc / the key again cancels |
 | Esc | Cancel a pending attack-move or building placement; otherwise open the pause menu (Resume, Fog of war on/off, Controls, Main Menu, Exit) |
 | F1 | Debug: spawn a wave of 20 enemies |
 | F2 | Map editor on the current map (F2 / Exit returns to the paused game) |
@@ -331,10 +383,11 @@ and `src/editor/` for the editor.
 | `game/input.c` | Selection list (units, building, gold node), orders, hotkeys, building placement ghost |
 | `game/minimap.c` | Minimap: cached terrain/fog texture, unit dots, camera outline, click to move camera / units |
 | `game/fog.c` | Fog of war: per-team visibility grid, recomputed 5× a second, one batched overlay pass |
+| `game/heal.c` | Healers (`canHeal`): find the nearest damaged ally (grid), walk into range, heal per tick, spread over patients, follow-and-heal order, green heal lines |
 | `game/combat.c` | Attacking, chasing, auto-targeting (aggro), projectile pool, the damage formula (`CombatDamage()`: damage type × armor type, minus armor) |
 | `game/ai.c` | Enemy AI: trains workers to a per-node target, builds a Barracks and an Archery Range, expands to new gold, trains its army, sends idle units at the player |
 | `game/economy.c` | Gold per team, gold node pool, worker mining loop, gold HUD (top right) |
-| `game/buildings.c` | Building pool, tile blocking, placement checks, production queue (cancel/refund), rally points, gold drop-off lookup, construction by workers, drawing |
+| `game/buildings.c` | Building pool, tile blocking, placement checks, prerequisites (`BuildingsCanBuild()`), production queue (cancel/refund), rally points, gold drop-off lookup, construction by workers, drawing |
 | `game/ui.c` | Tiny immediate-mode UI (buttons, panels, labels, tabs, scroll areas), scales with window height, blocks clicks from reaching the game |
 | `game/menu.c` | Main menu, map picker, pause menu, Controls page, Victory / Defeat screen |
 | `game/inspector.c` | Bottom panel for the selection; Train / Build buttons generated from the stats tables; hotkey clash check |
