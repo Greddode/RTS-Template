@@ -39,15 +39,19 @@ These come first, in this order before `tiles`:
 
 ## Tiles
 
-| Character | Tile | Walkable |
-|---|---|---|
-| `.` | grass | yes |
-| `,` | dirt | yes |
-| `~` | water | no |
-| `#` | rock / wall | no |
+| Character | Tile | Ground units, buildings, gold | Naval units | Air units |
+|---|---|---|---|---|
+| `.` | grass | yes | no | yes |
+| `,` | dirt | yes | no | yes |
+| `:` | gravel | yes | no | yes |
+| `~` | water | no | yes | yes |
+| `#` | rock / wall | no | no | yes |
+| `^` | lava | no | no | yes |
 
 The tile rows are read exactly as written: inside the grid, `#` is rock, not a comment. The
-characters come from `TILE_INFO` in `src/game/map.c`; a new tile type gets its own character there.
+characters and the three "who can cross it" columns come from `TILE_INFO` in `src/game/map.c`;
+a new tile type gets its own character there. Every unit has a movement class (`moveClass` in
+`UNIT_STATS`); all units are ground units for now.
 
 ## Objects
 
@@ -60,8 +64,9 @@ After the tiles, one object per line. Coordinates are in tiles, `0 0` is the top
 | `gold <x> <y> <amount>` | A gold node with 1 to 1,000,000 gold (1500 is the usual). |
 
 - **Teams:** `0` = the player, `1` = the computer.
-- **Building keywords:** `base` (3×3 tiles), `barracks`, `archery_range`, `academy` (2×2 each).
-- **Unit keywords:** `worker`, `melee`, `archer`, `knight`, `medic`, `mage`, `scout`.
+- **Building keywords:** `base` (3×3 tiles), `barracks`, `archery_range`, `academy`, `air_factory` (2×2 each).
+- **Unit keywords:** `worker`, `melee`, `archer`, `knight`, `medic`, `mage`, `scout`, `falcon`, `airship`.
+  Flyers (`falcon`, `airship`) may also stand on water, rock and lava (see the tile table).
 - Keywords are the `name` columns of `BUILDING_STATS` / `UNIT_STATS` in `config.h`, in any case,
   with a space written as `_` ("Archery Range" → `archery_range`). A unit or building you add to
   those tables works in map files with no other change.
@@ -72,10 +77,11 @@ After the tiles, one object per line. Coordinates are in tiles, `0 0` is the top
 
 ## Rules (checked when the map loads)
 
-- Every row has exactly `width` characters, there are exactly `height` rows, and only the four
+- Every row has exactly `width` characters, there are exactly `height` rows, and only the six
   tile characters are used.
-- Every object is inside the map, on walkable ground. A building's whole footprint must be on
-  grass or dirt.
+- Every object is inside the map, on a tile it can stand on: buildings and gold on ground tiles
+  (grass, dirt, gravel) with the building's whole footprint on them, units on tiles their
+  movement class allows (see the table above).
 - Objects don't overlap (a unit or gold node on a building's tiles counts as overlapping).
 - **Each team has at least one building**, or it would lose at once.
 - At most 1,024 objects; at most 64 buildings, 64 gold nodes and 2,048 units.

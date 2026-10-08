@@ -47,7 +47,8 @@ bool        MapFileWrite(const char *path, const MapDoc *doc);
 const char *MapFileError(void);
 
 // Rules every map must follow (used by the parser and the editor).
-bool        MapDocObjectFits(const MapDoc *doc, const MapObject *o, int ignoreIndex);   // on open ground, not overlapping others
+bool        MapDocObjectFits(const MapDoc *doc, const MapObject *o, int ignoreIndex);   // on tiles it can stand on, not overlapping others
+MoveClass   MapObjectClass(const MapObject *o);   // a unit's moveClass; buildings and gold: MOVE_GROUND
 
 // The maps folder: every *.map file found is listed (sorted by file name).
 const char *MapFilesFolder(void);

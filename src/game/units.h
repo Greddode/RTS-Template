@@ -72,6 +72,20 @@ typedef struct Unit {
 
 extern Unit units[MAX_UNITS];
 
+static inline MoveClass UnitMoveClass(const Unit *u) { return UNIT_STATS[u->type].moveClass; }   // from UNIT_STATS
+static inline bool UnitIsFlying(const Unit *u) { return UnitMoveClass(u) == MOVE_AIR; }
+
+// The targeting rule, used everywhere a target is picked, kept or damaged:
+// flyers can only be hit by types with hitsAir, everything else (ground and
+// naval units, buildings) only by types with hitsGround.
+static inline bool UnitCanHitUnit(UnitType attacker, const Unit *target)
+{
+    return UnitIsFlying(target) ? UNIT_STATS[attacker].hitsAir : UNIT_STATS[attacker].hitsGround;
+}
+static inline bool UnitCanHitBuildings(UnitType attacker) { return UNIT_STATS[attacker].hitsGround; }
+
+bool UnitsCanTrain(int team, UnitType type);   // its `requires` building is met (see UNIT_STATS); the Train button and the AI ask this
+
 int  UnitSpawn(Vector2 pos, UnitType type, int team);   // returns the unit's index, or -1 if the pool is full
 void UnitDespawn(int id);
 bool UnitIsAlive(int id, unsigned int serial);          // is this exact unit still in the game?
@@ -89,7 +103,7 @@ void UnitsOrderAttackBuilding(const int *ids, int count, int building);
 void UnitsOrderAttackMove(const int *ids, int count, Vector2 dest);   // move, but fight anything met on the way
 void UnitsOrderStop(const int *ids, int count);   // drop all orders and go idle
 void UnitsOrderHold(const int *ids, int count);   // stop, then stay put: attack only what's in range
-int  UnitsOpenSpots(Vector2 centre, int count, Vector2 *out);  // free spots around centre, closest first
+int  UnitsOpenSpots(MoveClass moveClass, Vector2 centre, int count, Vector2 *out);  // free spots (for that class) around centre, closest first
 
 // Movement helpers used by combat.c
 void    UnitMoveTo(int id, Vector2 dest);       // queue a (budgeted) path to dest

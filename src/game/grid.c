@@ -62,12 +62,13 @@ int GridQuery(Rectangle area, int *out, int maxOut)
 }
 
 // Check one cell for a closer enemy (helper for GridFindNearestEnemy).
-static void CheckCellForEnemy(int cx, int cy, Vector2 pos, int myTeam, int *best, float *bestDistSq)
+static void CheckCellForEnemy(int cx, int cy, Vector2 pos, int myTeam, bool ground, bool air, int *best, float *bestDistSq)
 {
     if (cx < 0 || cy < 0 || cx >= GRID_W || cy >= GRID_H) return;
     for (int i = cellHead[cy*GRID_W + cx]; i != -1; i = nextInCell[i])
     {
         if (!units[i].active || units[i].team == myTeam) continue;
+        if (!(UnitIsFlying(&units[i]) ? air : ground)) continue;   // e.g. a flyer, for a melee attacker
         if (!FogCanSee(myTeam, units[i].pos)) continue;   // can't target what it can't see
         if (units[i].hp <= units[i].incomingDamage) continue;   // already doomed by projectiles in flight
         float dx = units[i].pos.x - pos.x, dy = units[i].pos.y - pos.y;
@@ -81,8 +82,9 @@ static void CheckCellForEnemy(int cx, int cy, Vector2 pos, int myTeam, int *best
 // far, no later ring can beat it and the search stops. Nearby enemies are
 // found after a handful of cells. Enemies that projectiles already in the air
 // will kill are skipped (targeting them would only waste attacks), and so are
-// enemies hidden by the fog of war.
-int GridFindNearestEnemy(Vector2 pos, float maxDist, int myTeam)
+// enemies hidden by the fog of war. `ground` / `air`: which enemies count
+// (an attacker passes its hitsGround / hitsAir from UNIT_STATS).
+int GridFindNearestEnemy(Vector2 pos, float maxDist, int myTeam, bool ground, bool air)
 {
     int cx = CellCoord(pos.x, GRID_W), cy = CellCoord(pos.y, GRID_H);
     int best = -1;
@@ -99,13 +101,13 @@ int GridFindNearestEnemy(Vector2 pos, float maxDist, int myTeam)
         // The ring's top and bottom rows, then its left and right columns.
         for (int x = cx - r; x <= cx + r; x++)
         {
-            CheckCellForEnemy(x, cy - r, pos, myTeam, &best, &bestDistSq);
-            if (r > 0) CheckCellForEnemy(x, cy + r, pos, myTeam, &best, &bestDistSq);
+            CheckCellForEnemy(x, cy - r, pos, myTeam, ground, air, &best, &bestDistSq);
+            if (r > 0) CheckCellForEnemy(x, cy + r, pos, myTeam, ground, air, &best, &bestDistSq);
         }
         for (int y = cy - r + 1; y <= cy + r - 1; y++)
         {
-            CheckCellForEnemy(cx - r, y, pos, myTeam, &best, &bestDistSq);
-            CheckCellForEnemy(cx + r, y, pos, myTeam, &best, &bestDistSq);
+            CheckCellForEnemy(cx - r, y, pos, myTeam, ground, air, &best, &bestDistSq);
+            CheckCellForEnemy(cx + r, y, pos, myTeam, ground, air, &best, &bestDistSq);
         }
     }
     return best;

@@ -115,7 +115,7 @@ static bool GoToBase(int id)
     u->gatherState = GATHER_TO_BASE;
     u->dropBase = base;
     u->dropBaseSerial = buildings[base].serial;
-    UnitMoveTo(id, BuildingApproachPoint(base, u->pos, u->radius));
+    UnitMoveTo(id, BuildingApproachPoint(base, u->pos, u->radius, UnitMoveClass(u)));
     return true;
 }
 

@@ -130,7 +130,7 @@ static void SpawnNodesNear(Vector2 base, float startAngle)
     {
         float angle = (startAngle + k*25.0f)*DEG2RAD;
         Vector2 p = { base.x + cosf(angle)*NODE_DISTANCE, base.y + sinf(angle)*NODE_DISTANCE };
-        UnitsOpenSpots(p, 1, &p);
+        UnitsOpenSpots(MOVE_GROUND, p, 1, &p);   // gold stands on ground
         EconomySpawnNode(p, GOLD_NODE_AMOUNT);
     }
 }
@@ -138,7 +138,7 @@ static void SpawnNodesNear(Vector2 base, float startAngle)
 static void SpawnUnitsNear(Vector2 at, int count, UnitType type, int team)
 {
     static Vector2 spots[MAX_UNITS];
-    int found = UnitsOpenSpots(at, count, spots);
+    int found = UnitsOpenSpots(UNIT_STATS[type].moveClass, at, count, spots);
     for (int k = 0; k < found; k++) UnitSpawn(spots[k], type, team);
 }
 
@@ -155,7 +155,7 @@ static void SetupStart(Vector2 playerBase, Vector2 aiBase)
     for (int k = 0; k < NEUTRAL_NODES; k++)
     {
         Vector2 p = Vector2Lerp(playerBase, aiBase, 0.35f + 0.1f*k);
-        UnitsOpenSpots(p, 1, &p);
+        UnitsOpenSpots(MOVE_GROUND, p, 1, &p);
         EconomySpawnNode(p, GOLD_NODE_AMOUNT);
     }
 

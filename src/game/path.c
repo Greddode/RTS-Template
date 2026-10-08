@@ -15,6 +15,12 @@
 //   3. Smoothing: waypoints that can be skipped with a clear straight line are
 //      dropped, so units walk natural lines instead of tile zig-zags.
 //
+// Movement classes (MoveClass, config.h): every request carries the unit's
+// class, and A*, the line checks and the regions use MapTileWalkable(class,..),
+// so naval units route over water and ground units over land with the same
+// code. AIR units never pathfind: their request is answered at once with the
+// goal itself (a straight line; MapTileWalkable keeps them inside the map).
+//
 // All memory is fixed arrays sized for the map and unit pool - nothing is
 // allocated. Only one A* search runs at a time, sharing one set of scratch arrays.
 
@@ -33,6 +39,7 @@
 // --- Per-unit requests and results ---------------------------------------------
 static PathStatus status[MAX_UNITS];
 static Vector2    reqFrom[MAX_UNITS], reqTo[MAX_UNITS];
+static MoveClass  reqClass[MAX_UNITS];
 static Vector2    waypoints[MAX_UNITS][PATH_MAX_WAYPOINTS];
 static int        waypointCount[MAX_UNITS], waypointIndex[MAX_UNITS];
 
@@ -138,7 +145,7 @@ static bool StartNextRequest(void)
     int unit = QueuePop();
     if (status[unit] != PATH_PENDING) return true;   // cancelled while waiting
 
-    if (MapLineClear(reqFrom[unit], reqTo[unit], UNIT_RADIUS))
+    if (MapLineClear(reqClass[unit], reqFrom[unit], reqTo[unit], UNIT_RADIUS))
     {
         waypoints[unit][0] = reqTo[unit];
         waypointCount[unit] = 1;
@@ -182,14 +189,15 @@ static bool StepSearch(int steps)
         if (node == goalNode) return true;
 
         int x = node % MAP_W, y = node / MAP_W;
+        MoveClass mc = reqClass[searchUnit];
         for (int d = 0; d < 8; d++)
         {
             int nx = x + DIR_X[d], ny = y + DIR_Y[d];
-            if (!MapTileWalkable(nx, ny)) continue;
+            if (!MapTileWalkable(mc, nx, ny)) continue;
 
             // Diagonal moves need both side tiles open, or units would clip corners.
             bool diagonal = DIR_X[d] != 0 && DIR_Y[d] != 0;
-            if (diagonal && (!MapTileWalkable(nx, y) || !MapTileWalkable(x, ny))) continue;
+            if (diagonal && (!MapTileWalkable(mc, nx, y) || !MapTileWalkable(mc, x, ny))) continue;
 
             int next = ny*MAP_W + nx;
             if (closedStamp[next] == stamp) continue;
@@ -238,7 +246,7 @@ static void FinishSearch(void)
         for (int ahead = 0; i > 0 && ahead < SMOOTH_LOOKAHEAD; ahead++)
         {
             Vector2 further = (i - 1 == 0) ? end : NodeCentre(rawPath[i - 1]);
-            if (!MapLineClear(anchor, further, UNIT_RADIUS)) break;
+            if (!MapLineClear(reqClass[unit], anchor, further, UNIT_RADIUS)) break;
             i--;
         }
         anchor = (i == 0) ? end : NodeCentre(rawPath[i]);
@@ -251,15 +259,23 @@ static void FinishSearch(void)
     status[unit] = PATH_READY;
 }
 
-void PathRequest(int unit, Vector2 from, Vector2 to)
+void PathRequest(int unit, MoveClass moveClass, Vector2 from, Vector2 to)
 {
     if (searching && searchUnit == unit) searching = false;   // drop the old search
 
     reqFrom[unit] = from;
     reqTo[unit] = to;
-    status[unit] = PATH_PENDING;
+    reqClass[unit] = moveClass;
     waypointCount[unit] = 0;
     waypointIndex[unit] = 0;
+    if (moveClass == MOVE_AIR)   // flyers go straight: no queue, no search
+    {
+        waypoints[unit][0] = to;
+        waypointCount[unit] = 1;
+        status[unit] = PATH_READY;
+        return;
+    }
+    status[unit] = PATH_PENDING;
     if (!inQueue[unit]) QueuePush(unit);
 }
 
@@ -319,23 +335,27 @@ void PathReset(void)
 }
 
 // --- Regions (connected areas) ------------------------------------------------------
-// Flood fill: walk outward from each unlabelled open tile through its 4
-// neighbours and give everything reached the same number. A* moves
-// diagonally only when both side tiles are open, so it reaches exactly what
-// this 4-neighbour fill reaches.
-static unsigned short regionOf[NODE_COUNT];
+// Flood fill, per movement class: walk outward from each unlabelled open
+// tile through its 4 neighbours and give everything reached the same number.
+// A* moves diagonally only when both side tiles are open, so it reaches
+// exactly what this 4-neighbour fill reaches.
+// PathComputeRegions() fills the classes that unit types in UNIT_STATS use
+// (today only GROUND). A class no unit uses is filled only if PathRegion()
+// asks about it, so it costs nothing.
+static unsigned short regionOf[MOVE_CLASS_COUNT][NODE_COUNT];
+static bool           regionsStale[MOVE_CLASS_COUNT] = { true, true, true };
 static int            fillQueue[NODE_COUNT];
 
-void PathComputeRegions(void)
+static void ComputeRegions(MoveClass mc, unsigned short *region)
 {
-    memset(regionOf, 0, sizeof(regionOf));
+    memset(region, 0, sizeof(regionOf[0]));
     unsigned short next = 1;
     for (int start = 0; start < NODE_COUNT; start++)
     {
-        if (regionOf[start] || !MapTileWalkable(start % MAP_W, start / MAP_W)) continue;
+        if (region[start] || !MapTileWalkable(mc, start % MAP_W, start / MAP_W)) continue;
         int head = 0, tail = 0;
         fillQueue[tail++] = start;
-        regionOf[start] = next;
+        region[start] = next;
         while (head < tail)
         {
             int n = fillQueue[head++], x = n % MAP_W, y = n / MAP_W;
@@ -344,8 +364,8 @@ void PathComputeRegions(void)
                 int nx = x + DIR_X[d], ny = y + DIR_Y[d];
                 if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
                 int m = ny*MAP_W + nx;
-                if (regionOf[m] || !MapTileWalkable(nx, ny)) continue;
-                regionOf[m] = next;
+                if (region[m] || !MapTileWalkable(mc, nx, ny)) continue;
+                region[m] = next;
                 fillQueue[tail++] = m;
             }
         }
@@ -353,9 +373,25 @@ void PathComputeRegions(void)
     }
 }
 
-int PathRegion(Vector2 worldPos)
+static bool ClassUsed(MoveClass mc)
 {
+    for (int t = 0; t < UNIT_TYPE_COUNT; t++) if (UNIT_STATS[t].moveClass == mc) return true;
+    return false;
+}
+
+void PathComputeRegions(void)
+{
+    for (int mc = 0; mc < MOVE_CLASS_COUNT; mc++)
+    {
+        regionsStale[mc] = !ClassUsed((MoveClass)mc);   // unused: wait until someone asks
+        if (!regionsStale[mc]) ComputeRegions((MoveClass)mc, regionOf[mc]);
+    }
+}
+
+int PathRegion(MoveClass moveClass, Vector2 worldPos)
+{
+    if (regionsStale[moveClass]) { ComputeRegions(moveClass, regionOf[moveClass]); regionsStale[moveClass] = false; }
     int tx = (int)(worldPos.x/TILE_SIZE), ty = (int)(worldPos.y/TILE_SIZE);
     if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return 0;
-    return regionOf[ty*MAP_W + tx];
+    return regionOf[moveClass][ty*MAP_W + tx];
 }

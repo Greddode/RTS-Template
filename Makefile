@@ -46,6 +46,7 @@ test:
 	cmake --build tests/build
 	./tests/build/controls_overflow_test
 	./tests/build/controls_overflow_test_longnames
+	./tests/build/tile_class_test
 
 clean:
 	rm -rf build build-web dist tests/build

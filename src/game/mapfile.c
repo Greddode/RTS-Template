@@ -3,8 +3,8 @@
 // The format is described in maps/FORMAT.md. In short:
 //   name <text>            width <n>            height <n>
 //   tiles                  then exactly <height> rows of <width> characters,
-//                          one per tile, from TILE_INFO in map.h:
-//                          . grass   , dirt   ~ water   # rock
+//                          one per tile, from TILE_INFO in map.c:
+//                          . grass   , dirt   ~ water   # rock   : gravel   ^ lava
 //   <building> <team> <x> <y>     e.g. "base 0 4 50" (x, y = top-left tile)
 //   <unit> <team> <x> <y>         e.g. "worker 0 8 54"
 //   gold <x> <y> <amount>
@@ -14,7 +14,7 @@
 // tile grid, which is read row by row exactly as written (# there is rock).
 //
 // MapFileParse() reads the whole file into a MapDoc and checks EVERYTHING
-// (sizes, characters, coordinates, objects on water, overlapping objects,
+// (sizes, characters, coordinates, objects on tiles they can't stand on, overlapping objects,
 // a building for each team) without touching the game. MapFileLoad() then
 // sets the tiles and spawns the objects through the normal pools. The editor
 // uses the same MapDoc, MapFileParse() and MapFileWrite().
@@ -81,10 +81,15 @@ static int TileFromChar(char c)
     return -1;
 }
 
-static bool DocTileOpen(const MapDoc *doc, int x, int y)
+static bool DocTileOpen(const MapDoc *doc, int x, int y, MoveClass moveClass)
 {
     if (x < 0 || y < 0 || x >= doc->width || y >= doc->height) return false;
-    return TILE_INFO[doc->tiles[y*doc->width + x]].walkable;
+    return TileAllows((TileType)doc->tiles[y*doc->width + x], moveClass);
+}
+
+MoveClass MapObjectClass(const MapObject *o)
+{
+    return (o->kind == MAPOBJ_UNIT) ? UNIT_STATS[o->type].moveClass : MOVE_GROUND;   // buildings and gold need ground
 }
 
 static int ObjectSize(const MapObject *o)
@@ -103,7 +108,7 @@ bool MapDocObjectFits(const MapDoc *doc, const MapObject *o, int ignoreIndex)
     int size = ObjectSize(o);
     for (int y = o->y; y < o->y + size; y++)
         for (int x = o->x; x < o->x + size; x++)
-            if (!DocTileOpen(doc, x, y)) return false;
+            if (!DocTileOpen(doc, x, y, MapObjectClass(o))) return false;
     for (int i = 0; i < doc->objectCount; i++)
     {
         if (i != ignoreIndex && Overlap(o, &doc->objects[i])) return false;
@@ -168,8 +173,9 @@ static bool ParseObject(const char *path, int lineNo, const char *line, MapDoc *
     int size = ObjectSize(o);
     for (int y = o->y; y < o->y + size; y++)
         for (int x = o->x; x < o->x + size; x++)
-            if (!DocTileOpen(doc, x, y))
-                return Fail(path, lineNo, (size > 1) ? "%s at %d,%d covers water, rock or the map edge" : "%s at %d,%d is on water or rock", word, o->x, o->y);
+            if (!DocTileOpen(doc, x, y, MapObjectClass(o)))
+                return Fail(path, lineNo, (size > 1) ? "%s at %d,%d covers a tile it can't stand on (water, rock, lava) or the map edge"
+                                                     : "%s at %d,%d is on a tile it can't stand on (TILE_INFO in map.c)", word, o->x, o->y);
 
     for (int i = 0; i < doc->objectCount; i++)
     {
@@ -204,7 +210,7 @@ bool MapFileParse(const char *path, MapDoc *doc)
             for (int x = 0; x < doc->width && ok; x++)
             {
                 int t = TileFromChar(line[x]);
-                if (t < 0) ok = Fail(path, lineNo, "unknown tile character '%c' in column %d (use . , ~ #)", line[x], x + 1);
+                if (t < 0) ok = Fail(path, lineNo, "unknown tile character '%c' in column %d (use . , ~ # : ^)", line[x], x + 1);
                 else doc->tiles[row*doc->width + x] = (unsigned char)t;
             }
             if (++row == doc->height) { inGrid = false; gridDone = true; }

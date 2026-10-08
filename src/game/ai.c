@@ -33,7 +33,14 @@
 // Separately, every AI_TRAIN_TICKS it queues combat units: each time the type
 // furthest below its share in AI_ARMY_MIX (army alive + queued), at a building
 // that trains it and has room, until the queues are full or the gold runs out
-// (then it saves for that type).
+// (then it saves for that type). Types whose `requires` building it lacks are
+// skipped (UnitsCanTrain).
+// Air defence: while it sees fewer than AI_ANTI_AIR_PER_FLYER units that can
+// hit air (alive + queued) per player flyer, it only trains types with
+// hitsAir, even while saving for a building (and keeps its gold for them while
+// their buildings are busy; with no such building it trains the normal mix). It never trains flyers itself
+// (they aren't in AI_ARMY_MIX), and idle units are only sent after player
+// units they can hit.
 //
 // "Reachable" uses PathRegion(): a flood fill of the walkable tiles, redone
 // every think, so it answers "could pathfinding get there?" instantly.
@@ -44,6 +51,7 @@
 #include "config.h"
 #include "buildings.h"
 #include "economy.h"
+#include "fog.h"
 #include "grid.h"
 #include "path.h"
 #include "units.h"
@@ -77,9 +85,14 @@ static int  gatherers[MAX_GOLD_NODES];      // our workers mining each node
 static int  workerCount, workerTarget, baseCount;
 static char barracksNote[64], techNote[64], workerNote[64], expandNote[96];
 
-// Per-think cache: grid cell -> nearest player unit found from it.
-static int          cellTarget[GRID_W*GRID_H];
+// Per-think cache: grid cell -> nearest player unit found from it, one answer
+// per "what can it hit" (ground / air / both). Every answer for a cell is
+// searched from the same point (the first unit that asked), so units that hit
+// the same things get the same target, whatever their type.
+static Vector2      cellFrom[GRID_W*GRID_H];
 static unsigned int cellStamp[GRID_W*GRID_H];
+static int          cellTarget[4][GRID_W*GRID_H];      // [hitsGround + 2*hitsAir]
+static unsigned int cellTargetStamp[4][GRID_W*GRID_H];
 static unsigned int thinkStamp = 0;
 
 static void Note(char *note, int size, const char *fmt, ...)
@@ -122,7 +135,7 @@ static int NearestDropOff(Vector2 p, float maxDist)
 
 static bool NodeUsable(int n)
 {
-    return goldNodes[n].active && goldNodes[n].amount > 0 && PathRegion(goldNodes[n].pos) == homeRegion;
+    return goldNodes[n].active && goldNodes[n].amount > 0 && PathRegion(MOVE_GROUND, goldNodes[n].pos) == homeRegion;
 }
 
 // The base a node belongs to: the nearest drop-off within AI_NODE_RANGE_TILES.
@@ -444,7 +457,7 @@ static void FieldAround(int seed, GoldField *f)
 // no enemy building near.
 static bool FieldWorthIt(int seed, GoldField *f)
 {
-    if (!NodeFree(seed) || PathRegion(goldNodes[seed].pos) != homeRegion) return false;
+    if (!NodeFree(seed) || PathRegion(MOVE_GROUND, goldNodes[seed].pos) != homeRegion) return false;
     FieldAround(seed, f);
     return f->gold >= AI_EXPAND_MIN_GOLD && BuildingsFindNearestEnemy(f->centre, AI_EXPAND_ENEMY_TILES*TILE_SIZE, AI_TEAM) == -1;
 }
@@ -487,7 +500,7 @@ static bool FieldBaseSpot(const GoldField *f, Vector2 *out)
         for (int tx = cx - r; tx <= cx + r; tx++)
         {
             Vector2 p = { (tx + 0.5f)*TILE_SIZE, (ty + 0.5f)*TILE_SIZE };
-            if (!BuildingCanPlace(BUILDING_BASE, p) || PathRegion(p) != homeRegion) continue;
+            if (!BuildingCanPlace(BUILDING_BASE, p) || PathRegion(MOVE_GROUND, p) != homeRegion) continue;
             Rectangle rect = BuildingFootprint(BUILDING_BASE, p);
             bool tooClose = false;
             for (int n = 0; n < MAX_GOLD_NODES && !tooClose; n++)
@@ -623,19 +636,45 @@ static int ProductionBuilding(BuildingType type)
     return -1;
 }
 
+static bool HitsAir(int type) { return UNIT_STATS[type].hitsAir && UNIT_STATS[type].damage > 0.0f; }
+
+// Can we train any AI_ARMY_MIX type that hits air at all (a finished building
+// for it, busy or not, and its `requires` met)?
+static bool CanTrainAntiAir(void)
+{
+    for (int m = 0; m < AI_ARMY_MIX_COUNT; m++)
+    {
+        UnitType t = AI_ARMY_MIX[m].type;
+        if (!HitsAir(t) || AI_ARMY_MIX[m].share <= 0 || !UnitsCanTrain(AI_TEAM, t)) continue;
+        int b = FindOwn(UNIT_STATS[t].trainedAt);
+        if (b != -1 && !buildings[b].constructing) return true;
+    }
+    return false;
+}
+
 static void TrainTick(void)
 {
     if (--trainCountdown > 0) return;
     trainCountdown = AI_TRAIN_TICKS;
-    if (savingForExpansion || savingForTech) return;   // gold is going into a building
 
-    // Our army by type: alive plus queued. A pass over the pool every 5 s is
-    // cheap (it isn't a "who's nearby" search).
+    // Our army by type: alive plus queued, and the player's flyers we can see.
+    // A pass over the pool every 5 s is cheap (it isn't a "who's nearby" search).
     int have[UNIT_TYPE_COUNT] = { 0 };
-    for (int i = 0; i < MAX_UNITS; i++) if (units[i].active && units[i].team == AI_TEAM) have[units[i].type]++;
+    int playerFlyers = 0, antiAir = 0;
+    for (int i = 0; i < MAX_UNITS; i++)
+    {
+        const Unit *u = &units[i];
+        if (!u->active) continue;
+        if (u->team == AI_TEAM) have[u->type]++;
+        else if (UnitIsFlying(u) && FogCanSee(AI_TEAM, u->pos)) playerFlyers++;
+    }
     for (int b = 0; b < MAX_BUILDINGS; b++)
         if (buildings[b].active && buildings[b].team == AI_TEAM)
             for (int q = 0; q < buildings[b].queueCount; q++) have[buildings[b].queue[q]]++;
+    for (int t = 0; t < UNIT_TYPE_COUNT; t++) if (HitsAir(t)) antiAir += have[t];
+    bool wantAntiAir = antiAir < playerFlyers*AI_ANTI_AIR_PER_FLYER;
+
+    if ((savingForExpansion || savingForTech) && !wantAntiAir) return;   // gold is going into a building
 
     // Again and again: the type furthest below its share in AI_ARMY_MIX (not at
     // its cap, and with a building that can take it). If it can't be paid for,
@@ -648,19 +687,32 @@ static void TrainTick(void)
         {
             const AiArmyShare *mix = &AI_ARMY_MIX[m];
             if (mix->share <= 0 || (mix->maxAlive > 0 && have[mix->type] >= mix->maxAlive)) continue;
+            if (!UnitsCanTrain(AI_TEAM, mix->type)) continue;      // its `requires` building is missing
+            if (wantAntiAir && !HitsAir(mix->type)) continue;     // flyers about: only what can shoot them
             int b = ProductionBuilding(UNIT_STATS[mix->type].trainedAt);
             if (b == -1) continue;
             float ratio = have[mix->type]/(float)mix->share;
             if (bestType == -1 || ratio < bestRatio) { bestType = mix->type; bestBuilding = b; bestRatio = ratio; }
         }
+        if (bestType == -1 && wantAntiAir)
+        {
+            if (CanTrainAntiAir()) return;    // those buildings are just busy: keep the gold for them
+            wantAntiAir = false;              // no way to train any: the normal mix
+            continue;
+        }
         if (bestType == -1) return;                                        // every building is full
         if (!BuildingQueueTrain(bestBuilding, (UnitType)bestType)) return;   // not enough gold yet
         have[bestType]++;
+        if (HitsAir(bestType) && ++antiAir >= playerFlyers*AI_ANTI_AIR_PER_FLYER) wantAntiAir = false;
     }
 }
 
-static int NearestPlayerUnit(Vector2 from)
+// Nearest player unit a unit of `type` can hit (cached per grid cell per think).
+// Healers can't hit anything; they follow the army to any enemy (as an attack-move).
+static int NearestPlayerUnit(Vector2 from, UnitType type)
 {
+    bool healer = UNIT_STATS[type].damage <= 0.0f;
+    bool ground = healer || UNIT_STATS[type].hitsGround, air = healer || UNIT_STATS[type].hitsAir;
     int cx = (int)(from.x/GRID_CELL_SIZE), cy = (int)(from.y/GRID_CELL_SIZE);
     if (cx < 0) cx = 0;
     if (cy < 0) cy = 0;
@@ -668,12 +720,14 @@ static int NearestPlayerUnit(Vector2 from)
     if (cy > GRID_H - 1) cy = GRID_H - 1;
     int cell = cy*GRID_W + cx;
 
-    if (cellStamp[cell] != thinkStamp)
+    if (cellStamp[cell] != thinkStamp) { cellStamp[cell] = thinkStamp; cellFrom[cell] = from; }
+    int hits = (ground ? 1 : 0) + (air ? 2 : 0);
+    if (cellTargetStamp[hits][cell] != thinkStamp)
     {
-        cellStamp[cell] = thinkStamp;
-        cellTarget[cell] = GridFindNearestEnemy(from, (float)(MAP_PIXEL_W + MAP_PIXEL_H), AI_TEAM);
+        cellTargetStamp[hits][cell] = thinkStamp;
+        cellTarget[hits][cell] = GridFindNearestEnemy(cellFrom[cell], (float)(MAP_PIXEL_W + MAP_PIXEL_H), AI_TEAM, ground, air);
     }
-    return cellTarget[cell];
+    return cellTarget[hits][cell];
 }
 
 // --- 4. Idle workers ---------------------------------------------------------------------
@@ -723,7 +777,7 @@ void AiTick(void)
 
     PathComputeRegions();   // buildings may have changed what's reachable
     int anchor = AnchorBase();
-    homeRegion = (anchor != -1) ? PathRegion(buildings[anchor].rally) : 0;
+    homeRegion = (anchor != -1) ? PathRegion(MOVE_GROUND, buildings[anchor].rally) : 0;   // where our workers walk
     baseCount = CountOurBases();
 
     BarracksTick();
@@ -748,8 +802,9 @@ void AiTick(void)
             continue;
         }
 
-        int target = NearestPlayerUnit(u->pos);
-        int building = (target == -1) ? BuildingsFindNearestEnemy(u->pos, (float)(MAP_PIXEL_W + MAP_PIXEL_H), AI_TEAM) : -1;
+        int target = NearestPlayerUnit(u->pos, u->type);   // only ones it can hit (no Knights sent after Falcons)
+        bool hitsBuildings = UnitCanHitBuildings(u->type) || UNIT_STATS[u->type].damage <= 0.0f;   // healers go along anyway
+        int building = (target == -1 && hitsBuildings) ? BuildingsFindNearestEnemy(u->pos, (float)(MAP_PIXEL_W + MAP_PIXEL_H), AI_TEAM) : -1;
         if (target != -1) UnitsOrderAttack(&i, 1, target);
         else if (building != -1) UnitsOrderAttackBuilding(&i, 1, building);
         else toBase[toBaseCount++] = i;
@@ -761,7 +816,7 @@ void AiSpawnWave(int count)
 {
     static Vector2 spots[MAX_UNITS];
     if (count > MAX_UNITS) count = MAX_UNITS;
-    int found = UnitsOpenSpots(aiSpawn, count, spots);
+    int found = UnitsOpenSpots(MOVE_GROUND, aiSpawn, count, spots);   // Melee and Archers: ground units
     for (int k = 0; k < found; k++) UnitSpawn(spots[k], (k % 2) ? UNIT_ARCHER : UNIT_MELEE, AI_TEAM);
 }
 

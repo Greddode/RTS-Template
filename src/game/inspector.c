@@ -6,6 +6,8 @@
 //   several units   an icon and count per type, total health
 //   a building      name, health, production queue (click an icon to cancel
 //                   and get the gold back), progress, and Train buttons
+//                   (greyed "Requires ..." while a unit's `requires` building
+//                   is missing: UnitsCanTrain)
 //   a gold node     gold left
 // Selected workers also get a Build section.
 //
@@ -285,12 +287,15 @@ static void DrawBuilding(Rectangle panel, int id)
         const UnitStats *u = &UNIT_STATS[t];
         if (u->trainedAt != b->type) continue;
         bool affordable = EconomyGold(b->team) >= u->cost;
-        const char *label = TextFormat("%s  %dg  [%s]", u->name, u->cost, UiKeyName(u->hotkey));
+        bool unlocked = UnitsCanTrain(b->team, (UnitType)t);   // its `requires` building, if any
+        const char *label = unlocked ? TextFormat("%s  %dg  [%s]", u->name, u->cost, UiKeyName(u->hotkey))
+                                     : TextFormat("%s - Requires %s", u->name, BUILDING_STATS[u->requires].name);
         Rectangle slot = ButtonSlot(area, k++, offset);
         if (UiHover(slot)) hoverDescription = u->description;
-        if (UiButtonEx(slot, label, u->hotkey, !affordable))
+        if (UiButtonEx(slot, label, u->hotkey, !affordable || !unlocked))
         {
-            if (b->queueCount >= MAX_QUEUE) UiShowMessage("Queue full");
+            if (!unlocked) UiShowMessage(TextFormat("Requires %s", BUILDING_STATS[u->requires].name));
+            else if (b->queueCount >= MAX_QUEUE) UiShowMessage("Queue full");
             else if (!BuildingQueueTrain(id, (UnitType)t)) UiShowMessage("Not enough gold");
         }
     }

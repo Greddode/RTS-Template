@@ -4,9 +4,9 @@ A small, complete real-time strategy game in plain **C99 + [raylib](https://www.
 made to be read, changed and extended. It runs on **Linux desktop and in the browser**
 (WebAssembly), and it's built to run smoothly on a 4 GB Celeron laptop.
 
-**What you get:** workers that mine gold and construct buildings, 7 unit types (Melee, Archer,
-Knight, Worker, Medic, Mage, Scout) with armor and damage types, splash damage and healers,
-4 production buildings with prerequisites, a computer opponent that builds, expands and attacks,
+**What you get:** workers that mine gold and construct buildings, 9 unit types (Melee, Archer,
+Knight, Worker, Medic, Mage, Scout, and the flying Falcon and Airship) with armor and damage
+types, splash damage, healers and air/ground targeting, 5 production buildings with prerequisites, a computer opponent that builds, expands and attacks,
 fog of war, a minimap, A* pathfinding with a per-frame time budget, a map editor with
 test play, swappable PNG art (placeholders included), a readable UI font (Inter), a debug
 overlay (F3), and a web build ready to upload to itch.io. Units, buildings, tiles and damage types are rows in tables in
@@ -74,6 +74,7 @@ In a game, **Esc** (**Ctrl** in the web build) opens the pause menu and the **Co
 | add an armor or damage type | [Damage and armor](#damage-and-armor) |
 | tune the AI | [Computer opponent (AI)](#computer-opponent-ai): every number is a named constant in `config.h` |
 | change keys | `KEY_...` defines and the `CONTROLS` table in `config.h` |
+| add a tile, or change who can cross one | [Tiles and movement classes](#tiles-and-movement-classes) |
 | change the font | [Font](#font) |
 | change a unit's or building's description | the `description` column, see [Adding a new unit type](#adding-a-new-unit-type-walkthrough) |
 
@@ -99,7 +100,7 @@ name Duel (64x64)
 width 64                  # 8..128
 height 64                 # 8..128
 tiles                     # then exactly <height> rows of <width> characters
-..,,~~~##...              # . grass   , dirt   ~ water   # rock (read as-is: not a comment here)
+..,,~~~##::^              # . grass  , dirt  : gravel  ~ water  # rock  ^ lava  (# is read as-is here, not a comment)
 ...
 base 0 8 52               # <building> <team> <x> <y>   x,y = top-left tile; team 0 player, 1 AI
 worker 0 12 51            # <unit> <team> <x> <y>       worker, melee, archer, knight, ...
@@ -109,8 +110,47 @@ gold 5 46 1500            # gold <x> <y> <amount>   (gold has no team: anyone ca
 
 Building and unit keywords are the names in `BUILDING_STATS` / `UNIT_STATS` (any case, spaces
 written as `_`: "Archery Range" → `archery_range`), so new types work in map files automatically. Each team needs at least one building. Mistakes (unknown character,
-wrong row length, object on water or outside the map, overlapping buildings, ...) are shown on
+wrong row length, object on a tile it can't stand on or outside the map, overlapping buildings, ...) are shown on
 screen as `file:line: what's wrong`, and the game plays the Random map instead.
+
+## Tiles and movement classes
+
+Every unit has a **movement class** (`moveClass` in `UNIT_STATS`, the `MoveClass` enum in
+`config.h`), and every tile says which classes may cross it (`TILE_INFO` in `src/game/map.c`):
+
+| Tile | Map character | GROUND (and buildings, gold) | NAVAL | AIR |
+|---|---|---|---|---|
+| Grass | `.` | yes | | yes |
+| Dirt | `,` | yes | | yes |
+| Gravel | `:` | yes | | yes |
+| Water | `~` | | yes | yes |
+| Rock | `#` | | | yes |
+| Lava | `^` | | | yes |
+
+- **GROUND** units walk on land; **NAVAL** units sail on water. Buildings block both.
+- **AIR** units never pathfind: they fly in a straight line over every tile whose `air` column
+  is `true` (all six) and over buildings, and they can't leave the map.
+- **The Falcon and the Airship are AIR units** (see [Flying units](#flying-units-what-can-hit-what-and-unit-prerequisites));
+  the other seven are GROUND. NAVAL is only the foundation: the checks are in place, but no unit
+  uses it yet, and there's nothing like a dock or a landing yet.
+- **One check for everything:** `MapTileWalkable(class, x, y)` (map.c) is used by pathfinding,
+  movement, straight-line checks (`MapLineClear`), formation spots (`UnitsOpenSpots`) and the
+  "can I get there?" regions (`PathRegion(class, pos)`, which the AI uses). Change a column in
+  `TILE_INFO` and all of them follow. Buildings and gold always need a GROUND tile.
+- **Lava** is simply impassable for ground and naval units for now (it doesn't hurt anything).
+
+**Colours** were picked to stay easy to tell apart three ways: in full light, dimmed by the fog
+of war (explored but not visible), and dimmed on the minimap. Rock is much darker than before
+(62,60,70) so it stands out from the light grey gravel, but not so dark that explored rock
+under the fog looks like unexplored black. Lava (orange) is kept away from the red AI dots on
+the minimap. Placeholder art: `assets/sprites/tiles/gravel.png`, `lava.png`, `rock.png`.
+
+**To add a tile:** add it to `TileType` in `map.h` (before `TILE_COUNT`), give it a row in
+`TILE_INFO` with a map character no other tile uses (not a space), its colour and its three
+columns, and optionally `assets/sprites/tiles/<name>.png`. The editor gets a brush button, the
+map loader the character, and the minimap the colour automatically. `make test` runs
+`tile_class_test`, which lists the expected answer for every tile and class: add your tile's
+row there too.
 
 ## Web build
 
@@ -145,7 +185,7 @@ playing (opens the current map; **Exit** or F2 returns to the paused game exactl
 
 | Tool | What it does |
 |---|---|
-| Tile brushes (Grass, Dirt, Water, Rock) | Left-click / drag to paint; brush size 1, 3 or 5. Water and rock never paint under an object. **Ctrl+Z** undoes painting (32 steps) |
+| Tile brushes (Grass, Dirt, Water, Rock, Gravel, Lava) | Left-click / drag to paint; brush size 1, 3 or 5. A tile is never painted under an object that couldn't stand on it (water or lava under a Base). **Ctrl+Z** undoes painting (32 steps) |
 | Player / AI | Which team new objects belong to |
 | Base, Barracks, Archery Range, Academy | Click to place; a green/red ghost shows if it fits (same rules as map files) |
 | Melee, Archer, Worker, Knight, Medic, Mage, Scout | Click or drag to place units. The **brush size** (1, 3, 5) places a 1×1, 3×3 or 5×5 block centred on the cursor, one unit per tile. Tiles that can't take a unit (water, rock, a building, a unit already there) are skipped: the ghost shows every tile, green = a unit goes there, red = skipped. A drag never puts two units on one tile. At the limit (`MAP_MAX_OBJECTS`, 1,024 objects per map) the stroke stops with a message |
@@ -194,8 +234,8 @@ Every 2 seconds the AI:
    running low. One expansion at a time, at most 3 bases. If the builder dies, the site is
    cancelled (refunded) and that field isn't tried again.
 4. **Army:** idle workers go to the near node with the fewest workers; combat units attack the
-   nearest player unit or building (Medics follow along and heal; Mages hold fire while their
-   own units are in the splash). Every 5 seconds it queues units by the **army mix**,
+   nearest player unit **it can hit** or building (Medics follow along and heal; Mages hold fire
+   while their own units are in the splash; Melee and Knights are never sent after flyers). Every 5 seconds it queues units by the **army mix**,
    `AI_ARMY_MIX` in `config.h`:
 
    | Type | Share | Cap (alive) |
@@ -209,6 +249,12 @@ Every 2 seconds the AI:
 
    Each time it picks the type furthest below its share (counting units alive and queued), at a
    building that trains it and has room in its queue (2 per building), until the queues are full.
+   Types whose `requires` building it lacks are skipped.
+   **Air defence:** for every player flyer it can see it wants `AI_ANTI_AIR_PER_FLYER` (2) units
+   that can hit air (alive + queued). While it has fewer, it only trains types with `hitsAir`
+   (Archers, Scouts, Mages), even while saving for a building, and keeps its gold for them while
+   their buildings are busy. **It doesn't build an Air Factory or train flyers** (they aren't in
+   the mix or `AI_TECH_ORDER`).
    If it can't afford that type yet, it stops and saves for it instead of buying something
    cheaper. Change the shares to change its style. A new unit type is used once it has a row here.
 
@@ -259,9 +305,9 @@ usual coloured shape, so you can replace art one type at a time. Placeholder PNG
 as templates to paint over.
 
 ```
-assets/sprites/units/      melee.png  archer.png  worker.png  knight.png  medic.png  mage.png  scout.png   (names from UNIT_STATS)
-assets/sprites/buildings/  base.png   barracks.png  archery_range.png  academy.png  (names from BUILDING_STATS)
-assets/sprites/tiles/      grass.png  dirt.png  water.png  rock.png  (names from TILE_INFO)
+assets/sprites/units/      melee.png  archer.png  worker.png  knight.png  medic.png  mage.png  scout.png  falcon.png  airship.png   (names from UNIT_STATS)
+assets/sprites/buildings/  base.png   barracks.png  archery_range.png  academy.png  air_factory.png  (names from BUILDING_STATS)
+assets/sprites/tiles/      grass.png  dirt.png  water.png  rock.png  gravel.png  lava.png  (names from TILE_INFO)
 ```
 
 **Naming:** the file name is the type's `name` from the table, in lower case, with spaces
@@ -427,6 +473,47 @@ flying, new shots (arrows and bolts) are skipped. The console says so once.
 
 The inspector shows a selected Mage's splash radius, edge damage and minimum range.
 
+## Flying units, what can hit what, and unit prerequisites
+
+**Air Factory** (250 gold, hotkey F, needs a finished Barracks) trains the two flyers:
+
+| | Falcon (L) | Airship (U) |
+|---|---|---|
+| Role | very fast scout and skirmisher | slow, tough bomber |
+| HP / armor | 45, Light | 420, Heavy (3) |
+| Attack | 6 Pierce, range 90, hits **air and ground** | 28 Blunt bombs, range 24, splash 44 px, hits **ground only** |
+| Speed / cost | 140 px/s, 70 gold | 38 px/s, 300 gold |
+| Needs | the Air Factory | the Air Factory **and a finished Academy** |
+
+**Flying** (`moveClass` `MOVE_AIR`): flyers go in a straight line over water, rock, lava and
+buildings, with no pathfinding. Nothing on the map blocks them, but they can't leave it. They
+only push apart from other flyers, so ground units walk underneath them and never block them.
+They're drawn above the ground units with a small shadow, in their own batched pass. Everything
+else works as for any unit: selection, the minimap, fog sight, hold, attack-move, the leash,
+Medic healing and rally points.
+
+**What can hit what:** two `UNIT_STATS` columns, `hitsGround` (ground and naval units, and
+buildings) and `hitsAir` (flyers). The rule is `UnitCanHitUnit()` in `units.h`:
+
+| | hits ground | hits air |
+|---|---|---|
+| Archer, Scout, Mage, Falcon | yes | yes |
+| Melee, Knight, Worker, Airship | yes | no |
+| Medic (no attack) | no | no |
+
+Every place that picks, keeps or damages a target uses it: auto-targeting and the grid search
+(`GridFindNearestEnemy`), attack orders, the AI's orders, the target a unit already has, and splash
+victims. So a Knight never targets, chases or hurts a Falcon, and an Airship's bombs pass through
+flyers (friendly or not) but hit everything on the ground in the blast, friends included.
+**Right-clicking a flyer** with units that can't hit it gives those units a plain move to it
+(they walk underneath); the ones that can hit it attack.
+
+**Unit prerequisites:** a `requires` column in `UNIT_STATS` (a building type, or
+`BUILDING_NONE`). Besides the building that trains it, the team must own a **finished** one of
+these. `UnitsCanTrain(team, type)` in `units.c` is the one check, used by `BuildingQueueTrain()`,
+so the player and the AI follow the same rule. Until then the Train button is greyed and says
+"Airship - Requires Academy"; clicking it or pressing its hotkey says "Requires Academy".
+
 ## Adding a new unit type (walkthrough)
 
 Example: a **Spearman**, a pierce-damage foot soldier with medium armor, trained at the Barracks.
@@ -440,14 +527,17 @@ typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UN
 **2. Give it a stats row** in `UNIT_STATS` (same file):
 
 ```c
-//                   name        trainedAt          hotkey  hp      damage  damageType     range  cooldown  speed  armor  armorType     cost  trainTime  sight       canHeal  healRate  healRange  splash  falloff  minRange  description
-[UNIT_SPEARMAN] = { "Spearman", BUILDING_BARRACKS, KEY_P,  100.0f, 10.0f,  DAMAGE_PIERCE, 20.0f, 0.9f,     70.0f, 1.0f,  ARMOR_MEDIUM, 80,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f, "A cheap pikeman who keeps charging Knights at bay." },
+//                   name        trainedAt          hotkey  hp      damage  damageType     range  cooldown  speed  armor  armorType     cost  trainTime  sight       canHeal  healRate  healRange  splash  falloff  minRange  hitsGround  hitsAir  requires       moveClass    description
+[UNIT_SPEARMAN] = { "Spearman", BUILDING_BARRACKS, KEY_P,  100.0f, 10.0f,  DAMAGE_PIERCE, 20.0f, 0.9f,     70.0f, 1.0f,  ARMOR_MEDIUM, 80,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       false,   BUILDING_NONE, MOVE_GROUND, "A cheap pikeman who keeps charging Knights at bay." },
 ```
 
 - `name` is used everywhere: inspector, editor button, map files, PNG file name.
 - `trainedAt` puts a Train button on that building (`BUILDING_NONE` = can't be trained).
 - `damageType`, `armor` and `armorType`: see [Damage and armor](#damage-and-armor).
 - `canHeal`, `healRate`, `healRange`: `false, 0, 0` for a fighter (healers: see below).
+- `hitsGround`, `hitsAir`: what it can attack; a pike can't reach flyers. `requires`: a building
+  it needs besides the Barracks (`BUILDING_NONE` here). See [Flying units](#flying-units-what-can-hit-what-and-unit-prerequisites).
+- `moveClass`: `MOVE_GROUND` for a soldier (see [Tiles and movement classes](#tiles-and-movement-classes)).
 - `description`: one sentence the inspector shows above its panel when a Spearman is selected,
   or when the mouse is over its Train button. Long text is word-wrapped and scrolls; `""` shows
   no box. Buildings have the same column.
@@ -482,7 +572,7 @@ support, fog sight and the minimap dot. A new **building** works the same way: a
 own heal numbers. It then behaves exactly like the Medic (no code):
 
 ```c
-[UNIT_PRIEST] = { "Priest", BUILDING_TEMPLE, KEY_I, 50.0f, 0.0f, DAMAGE_MAGIC, 0.0f, 0.0f, 65.0f, 0.0f, ARMOR_LIGHT, 150, 9.0f, UNIT_SIGHT, true, 12.0f, 80.0f, 0.0f, 0.0f, 0.0f, "Heals allies from further away than a Medic." },
+[UNIT_PRIEST] = { "Priest", BUILDING_TEMPLE, KEY_I, 50.0f, 0.0f, DAMAGE_MAGIC, 0.0f, 0.0f, 65.0f, 0.0f, ARMOR_LIGHT, 150, 9.0f, UNIT_SIGHT, true, 12.0f, 80.0f, 0.0f, 0.0f, 0.0f, false, false, BUILDING_NONE, MOVE_GROUND, "Heals allies from further away than a Medic." },
 ```
 
 **Variant: a building that needs another.** A **Temple** that trains the Priest and needs an
@@ -503,8 +593,9 @@ button and `temple.png` art, all from the row.
   `combat.c`) shoots arrows (Archer, Scout), any unit with a `splashRadius` fires bolts, and the
   rest hit instantly at their `range`.
 - `sight` (tiles it reveals in the fog) can be up to `FOG_MAX_SIGHT` (16, `config.h`).
-- The AI trains Melee at its Barracks and Archers at its Archery Range (`TrainTick()` in `ai.c`).
-  It never builds a building or trains a unit it isn't told to, so new rows don't change it.
+- The AI trains the types in `AI_ARMY_MIX` at the buildings in `AI_TECH_ORDER` (both in
+  `config.h`). It never builds a building or trains a unit it isn't told to, so new rows don't
+  change it: add your unit to `AI_ARMY_MIX` to have the AI use it.
 
 ## Winning and losing
 
@@ -529,7 +620,7 @@ generated from `CONTROLS` and the key bindings in `config.h`; this table mirrors
 | Shift + select | Add to selection |
 | Right click | Move selected units |
 | Right click ground (building selected) | Set its rally point (blue flag): newly trained units walk there |
-| Right click on enemy unit or building | Attack it |
+| Right click on enemy unit or building | Attack it (selected units that can't hit it, e.g. Melee on a Falcon, just move there) |
 | Right click on gold (workers selected) | Mine it: workers carry gold to the nearest base and repeat |
 | Right click your unfinished building (workers selected) | Workers help build it |
 | Right click your damaged unit (Medics selected) | Medics follow and heal it until it's full; the rest of the selection moves there |
@@ -540,8 +631,9 @@ generated from `CONTROLS` and the key bindings in `config.h`; this table mirrors
 | M / N (Barracks selected) | Train Melee (75) / Knight (175); queue up to 5 |
 | C / O (Archery Range selected) | Train an Archer (100) / Scout (60); queue up to 5 |
 | D / G (Academy selected) | Train a Medic (125) / Mage (200); queue up to 5 |
+| L / U (Air Factory selected) | Train a Falcon (70) / Airship (300, needs a finished Academy); queue up to 5 |
 | Click a queue icon (building selected) | Cancel that unit, gold refunded (destroying the building loses its queue) |
-| B / K / R / E (workers selected) | Build a Base (400) / Barracks (150) / Archery Range (175) / Academy (450, needs a finished Barracks): a ghost follows the mouse, green = OK, red = blocked; left click places, right click / Esc / the key again cancels |
+| B / K / R / E / F (workers selected) | Build a Base (400) / Barracks (150) / Archery Range (175) / Academy (450, needs a finished Barracks) / Air Factory (250, needs a finished Barracks): a ghost follows the mouse, green = OK, red = blocked; left click places, right click / Esc / the key again cancels |
 | Esc (web: Ctrl) | Cancel a pending attack-move or building placement; otherwise open the pause menu (Resume, Fog of war on/off, Controls, Main Menu, Exit). The web build uses Left Ctrl because browsers use Esc to leave fullscreen; change it with `KEY_PAUSE` in `config.h` |
 | F1 | Debug: spawn a wave of 20 enemies |
 | F2 | Map editor on the current map (F2 / Exit returns to the paused game) |
@@ -567,27 +659,28 @@ and `src/editor/` for the editor.
 | `main.c` | Window, game states (menu / playing / paused / victory / defeat / editor), fixed 30 Hz sim loop, new game (map file or Random), win/lose check, editor ↔ game hand-over, performance log |
 | `game/overlay.c` | F3 debug overlay: FPS (now, min / avg), frame / tick / fog / path times, counts per team, AI state; one FPS line outside the game |
 | `game/config.h` | Shared settings: tick rate, teams, unit and building stats tables, game states, key bindings, controls list |
-| `game/map.c` | Tile map: generated "Random" map, real size of the loaded map, walkability (terrain + building-blocked tiles), culled drawing |
+| `game/map.c` | Tile map: `TILE_INFO`, generated "Random" map, real size of the loaded map, walkability per movement class (`MapTileWalkable`: terrain + building-blocked tiles), culled drawing |
 | `game/mapfile.c` | Map files: `MapDoc` (tiles + objects), parse + full validation with file:line errors, load into the game, write, scan the folder |
 | `editor/editor.c` | Map editor: tile brushes with undo, object tools, unit brush (1×1 / 3×3 / 5×5), save / load / test play |
 | `editor/web_download.js` | Web build only: the editor's Save hands the file to the browser as a download |
 | `web/shell.html` | Web build only: the page around the game (canvas scaling, loading bar, no right-click menu, game keys kept from the browser) |
 | `game/sprites.c` | Optional PNG art: scans `assets/sprites`, packs it into one atlas texture (shelf packer), draws units / buildings / tiles from it |
 | `game/camera.c` | Pan / zoom, visible-area queries; the editor's zoom-to-fit (`CamUpdateEditor()`) |
-| `game/units.c` | Unit pool, movement, separation, drawing |
-| `game/grid.c` | Spatial grid for nearby-unit queries |
-| `game/path.c` | A* pathfinding: request queue, per-frame time budget, path smoothing; walkable regions ("can I get there?") |
+| `game/units.c` | Unit pool, movement, separation (flyers only with flyers), drawing (flyers above, with shadows), orders, `UnitsCanTrain()` |
+| `game/grid.c` | Spatial grid for nearby-unit queries (nearest enemy: ground ones, flyers, or both) |
+| `game/path.c` | A* pathfinding per movement class (air: straight, no search): request queue, per-frame time budget, path smoothing; regions per class ("can I get there?") |
 | `game/input.c` | Selection list (units, building, gold node), orders, hotkeys, building placement ghost |
 | `game/minimap.c` | Minimap: cached terrain/fog texture, unit dots, camera outline, click to move camera / units |
 | `game/fog.c` | Fog of war: per-team visibility grid, recomputed 5× a second, one batched overlay pass |
 | `game/heal.c` | Healers (`canHeal`): find the nearest damaged ally (grid), walk into range, heal per tick, spread over patients, follow-and-heal order, green heal lines |
-| `game/combat.c` | Attacking, chasing, auto-targeting (aggro), projectile pool (arrows, magic bolts with splash, splash rings), minimum range, the damage formula (`CombatDamage()`: damage type × armor type, minus armor) |
-| `game/ai.c` | Enemy AI: trains workers to a per-node target, builds a Barracks and an Archery Range, expands to new gold, trains its army, sends idle units at the player |
+| `game/combat.c` | Attacking, chasing, auto-targeting (aggro), what can hit what (`hitsGround` / `hitsAir`), projectile pool (arrows, magic bolts and bombs with splash, splash rings), minimum range, the damage formula (`CombatDamage()`: damage type × armor type, minus armor) |
+| `game/ai.c` | Enemy AI: trains workers to a per-node target, builds a Barracks and tech buildings, expands to new gold, trains its army (and air defence against player flyers), sends idle units at player units they can hit |
 | `game/economy.c` | Gold per team, gold node pool, worker mining loop, gold HUD (top right) |
 | `game/buildings.c` | Building pool, tile blocking, placement checks, prerequisites (`BuildingsCanBuild()`), production queue (cancel/refund), rally points, gold drop-off lookup, construction by workers, drawing |
 | `game/ui.c` | Tiny immediate-mode UI (buttons, panels, labels, tabs, scroll areas, word-wrapped text boxes), scales with window height, blocks clicks from reaching the game; the UI font: all text is drawn and measured here |
 | `game/menu.c` | Main menu, map picker, pause menu, Controls page (measured: shrinks / wraps to its columns, scrolls), Victory / Defeat screen |
 | `game/inspector.c` | Bottom panel for the selection; Train / Build buttons generated from the stats tables; description box; hotkey clash check |
+| `tests/tile_class_test.c` | Automated test: every tile × movement class, building blocking, the map edge, straight lines, regions, air paths, map characters |
 | `tests/controls_overflow_test.c` | Automated test: draws the Controls page at 6 window sizes (and with very long names) and fails if any text leaves its column (see the file) |
 
 ## Performance
@@ -601,6 +694,7 @@ and 30 Scouts; 732 units in all).
 |---|---|---|---|
 | FPS, 100 workers + 300 vs 300 | 60 (min 60) | 390 avg (min 355) | 59 (min 59) |
 | Same, with the Inter font (camera zoomed out over the base and the battle, Base selected) | 60 (min 59.6) | 351–406 avg (3 runs; 1.0.0 in the same runs: 381–433) | |
+| Same, each side's 300 including 15 Falcons and 5 Airships | 60 (min 59.5) | 331–356 avg (3 runs; all-ground in the same runs: 315–412) | |
 | Map editor, whole 128×128 map on screen | | 124 avg | |
 | FPS, full unit pool (2,046 units) | 59 (min 58) | 293 avg (min 259) | not measured |
 | Sim tick (30 per second), battle | 1.1–1.7 ms avg, 4.8 ms worst | | |
@@ -636,6 +730,8 @@ running on the same machine lower the uncapped numbers a lot. Press F3 to see th
   screens). The editor's **Load** is off in the browser (Save downloads the file).
 - Maps and art are read at startup; changing them needs a restart (the web build needs a rebuild).
 - **Text is Latin-1 only** (English and western European accents), see [Font](#font).
+- **Every unit is the same size** (`UNIT_RADIUS`), so the Airship is drawn as small as a Falcon.
+- **The AI doesn't use flyers** (it only defends against them).
 
 ### Balance (measured)
 
@@ -649,7 +745,7 @@ Equal-gold fights (1,500 gold each, two groups walking into each other):
 | Knight vs Mage | Knight wins, keeps 62% |
 
 AI vs AI (the same AI on both sides, fog off, starting soldiers removed) ends in 4–10 minutes,
-and both sides train all seven unit types on every map with an economy. Which side wins depends
+and both sides train all seven ground unit types on every map with an economy. Which side wins depends
 on the map: side 0 won 4 of 5. Against a player who does nothing, the AI wins in 1–4 minutes. Change the numbers in
 `UNIT_STATS` (`config.h`); every number above can be re-measured after a change.
 

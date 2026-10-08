@@ -42,14 +42,14 @@ bool BuildingIsAlive(int id, unsigned int serial);
 Rectangle BuildingRect(int id);                     // footprint in world pixels
 Vector2   BuildingCentre(int id);
 float     BuildingDistance(int id, Vector2 p);      // from p to the nearest wall (0 if inside)
-Vector2   BuildingApproachPoint(int id, Vector2 from, float radius);   // open spot just outside, facing `from` (or the nearest open one)
+Vector2   BuildingApproachPoint(int id, Vector2 from, float radius, MoveClass moveClass);   // open spot (for that class) just outside, facing `from` (or the nearest open one)
 int       BuildingAt(Vector2 p);                    // building under a point, or -1
 int       BuildingsFindNearestEnemy(Vector2 pos, float maxDist, int team);   // skips doomed ones
 int       BuildingsFindDropOff(Vector2 pos, int team);                       // nearest finished gold drop-off, or -1
 bool      BuildingsFindSpot(BuildingType type, Vector2 near, Vector2 *out);  // nearest place it fits, searching outward
 void      BuildingSetRally(int id, Vector2 point);
 
-bool BuildingQueueTrain(int id, UnitType type);     // pays the cost; false if too poor, queue full or wrong building
+bool BuildingQueueTrain(int id, UnitType type);     // pays the cost; false if too poor, queue full, wrong building or its `requires` is missing
 void BuildingCancelQueued(int id, int index);       // remove queue[index] and refund its cost
 float BuildingBuildProgress(int id);                // 0..1 while unfinished
 

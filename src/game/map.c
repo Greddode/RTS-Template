@@ -2,8 +2,11 @@
 //
 // The whole map is one flat array of tile types, indexed tiles[y * MAP_W + x].
 // A second array, `blocked`, marks tiles covered by buildings (buildings.c
-// sets it). A tile is walkable only if its terrain is open AND it's not blocked,
-// so pathfinding and movement avoid buildings without knowing about them.
+// sets it). Who may enter a tile depends on the unit's movement class
+// (MoveClass, config.h): TILE_INFO has a column per class, and buildings block
+// GROUND and NAVAL units but not AIR. MapTileWalkable(class, x, y) is the one
+// check everything uses (pathfinding, movement, formations, regions), so
+// pathfinding and movement avoid buildings without knowing about them.
 // MapGenerate() scatters seeded blobs of dirt/water/rock on grass. Swap it for
 // your own map loader when you have real maps.
 // Tiles are coloured squares from TILE_INFO, or art from assets/sprites/tiles.
@@ -20,12 +23,16 @@ static bool          blocked[MAP_W * MAP_H];
 static int           mapWidth = MAP_W, mapHeight = MAP_H;   // this map's real size (<= MAP_W x MAP_H)
 static unsigned int  version = 1;                         // bumped on every terrain change
 
+// Colours were picked to stay easy to tell apart when dimmed by the fog of war
+// and on the minimap (see README, "Tiles and movement classes").
 const TileInfo TILE_INFO[TILE_COUNT] = {
-    //              name     char  color                      walkable
-    [TILE_GRASS] = { "Grass", '.', {  70, 120,  60, 255 },   true  },
-    [TILE_DIRT]  = { "Dirt",  ',', { 125, 105,  70, 255 },   true  },
-    [TILE_WATER] = { "Water", '~', {  50,  90, 160, 255 },   false },
-    [TILE_ROCK]  = { "Rock",  '#', {  95,  95, 100, 255 },   false },
+    //               name      char  color                      ground  naval  air
+    [TILE_GRASS]  = { "Grass",  '.', {  70, 120,  60, 255 },   true,   false, true },
+    [TILE_DIRT]   = { "Dirt",   ',', { 125, 105,  70, 255 },   true,   false, true },
+    [TILE_WATER]  = { "Water",  '~', {  50,  90, 160, 255 },   false,  true,  true },
+    [TILE_ROCK]   = { "Rock",   '#', {  62,  60,  70, 255 },   false,  false, true },
+    [TILE_GRAVEL] = { "Gravel", ':', { 150, 154, 160, 255 },   true,   false, true },
+    [TILE_LAVA]   = { "Lava",   '^', { 250, 135,  30, 255 },   false,  false, true },
 };
 
 // Tiny private random generator so map generation doesn't disturb
@@ -109,10 +116,18 @@ TileType MapGetTile(int tx, int ty)
     return (TileType)tiles[ty*MAP_W + tx];
 }
 
-bool MapTileWalkable(int tx, int ty)
+bool TileAllows(TileType type, MoveClass moveClass)
 {
-    TileType t = MapGetTile(tx, ty);   // out of bounds = rock
-    return TILE_INFO[t].walkable && !blocked[ty*MAP_W + tx];
+    if (moveClass == MOVE_NAVAL) return TILE_INFO[type].naval;
+    if (moveClass == MOVE_AIR) return TILE_INFO[type].air;
+    return TILE_INFO[type].ground;
+}
+
+bool MapTileWalkable(MoveClass moveClass, int tx, int ty)
+{
+    if (tx < 0 || ty < 0 || tx >= mapWidth || ty >= mapHeight) return false;   // nobody leaves the map
+    if (!TileAllows((TileType)tiles[ty*MAP_W + tx], moveClass)) return false;
+    return moveClass == MOVE_AIR || !blocked[ty*MAP_W + tx];   // buildings block ground and naval units
 }
 
 void MapSetBlocked(int tx, int ty, int w, int h, bool isBlocked)
@@ -132,28 +147,28 @@ void MapClearArea(Vector2 worldPos, int radiusTiles)
     PaintBlob((int)(worldPos.x/TILE_SIZE), (int)(worldPos.y/TILE_SIZE), radiusTiles, TILE_GRASS);
 }
 
-bool MapIsWalkable(Vector2 worldPos)
+bool MapIsWalkable(MoveClass moveClass, Vector2 worldPos)
 {
-    return MapTileWalkable((int)floorf(worldPos.x / TILE_SIZE), (int)floorf(worldPos.y / TILE_SIZE));
+    return MapTileWalkable(moveClass, (int)floorf(worldPos.x / TILE_SIZE), (int)floorf(worldPos.y / TILE_SIZE));
 }
 
 // Checks the four edge points of the circle: cheap, and close enough for
 // units that are much smaller than a tile.
-bool MapCircleWalkable(Vector2 c, float r)
+bool MapCircleWalkable(MoveClass m, Vector2 c, float r)
 {
-    return MapIsWalkable((Vector2){ c.x + r, c.y }) && MapIsWalkable((Vector2){ c.x - r, c.y }) &&
-           MapIsWalkable((Vector2){ c.x, c.y + r }) && MapIsWalkable((Vector2){ c.x, c.y - r });
+    return MapIsWalkable(m, (Vector2){ c.x + r, c.y }) && MapIsWalkable(m, (Vector2){ c.x - r, c.y }) &&
+           MapIsWalkable(m, (Vector2){ c.x, c.y + r }) && MapIsWalkable(m, (Vector2){ c.x, c.y - r });
 }
 
 // Samples the line every LINE_SAMPLE_STEP pixels and checks the unit fits at each sample.
-bool MapLineClear(Vector2 from, Vector2 to, float radius)
+bool MapLineClear(MoveClass moveClass, Vector2 from, Vector2 to, float radius)
 {
     float dx = to.x - from.x, dy = to.y - from.y;
     int steps = (int)(sqrtf(dx*dx + dy*dy) / LINE_SAMPLE_STEP) + 1;
     for (int i = 0; i <= steps; i++)
     {
         float t = (float)i / steps;
-        if (!MapCircleWalkable((Vector2){ from.x + dx*t, from.y + dy*t }, radius)) return false;
+        if (!MapCircleWalkable(moveClass, (Vector2){ from.x + dx*t, from.y + dy*t }, radius)) return false;
     }
     return true;
 }

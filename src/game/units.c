@@ -6,8 +6,10 @@
 //
 // Movement: a move order asks path.c for a route. Each tick a moving unit steps
 // toward its current waypoint (or waits if its path isn't ready yet), gets
-// pushed away from units it overlaps (separation), and refuses to step into
-// water/rock.
+// pushed away from units it overlaps (separation), and refuses to step onto
+// a tile its movement class can't enter (UNIT_STATS moveClass, see config.h:
+// ground units stay off water and rock, naval units stay on water, air units
+// only stay inside the map). Air units get a straight "path" from path.c.
 //
 // Repathing: if a unit stops getting closer to its waypoint for
 // UNIT_REPATH_TICKS (blocked by a crowd, pushed off its route, ...), it asks
@@ -27,6 +29,14 @@
 // Healers (heal.c) never take the combat path: when idle or attack-moving
 // they look for damaged allies instead of enemies, and an attack order sends
 // them along as an attack-move. So does any unit with damage 0.
+//
+// Flyers (moveClass MOVE_AIR): path.c gives them a straight line, nothing on
+// the map blocks them, and they only push apart from other flyers (ground
+// units walk underneath). They're drawn after the ground units, each with a
+// small shadow on the ground, in their own passes (so still one batch each).
+//
+// Targets: an attack order on something a unit can't hit (UnitCanHitUnit:
+// hitsAir / hitsGround) becomes a plain move to it for that unit.
 //
 // Stop drops every order (the unit is idle, so it still auto-attacks).
 // Hold is stop plus `holdPosition`: combat.c then only lets it target enemies
@@ -57,6 +67,8 @@
 #define MAGE_MARK_COLOR     (Color){ 150, 120, 255, 255 } // mages get a violet diamond
 #define SCOUT_MARK_COLOR    (Color){ 245, 245, 240, 255 } // scouts get a small white arrowhead
 #define WORKER_MARK_COLOR   (Color){ 235, 235, 225, 255 } // workers get a light square
+#define FALCON_MARK_COLOR   (Color){ 245, 245, 240, 255 } // falcons get white swept-back wings
+#define AIRSHIP_MARK_COLOR  (Color){ 60, 55, 50, 255 }    // airships get a dark gondola bar
 #define UNIT_SELECTED_COLOR (Color){ 60, 255, 90, 255 }
 #define HEALTH_BAR_W        14.0f
 #define HEALTH_BAR_H        3.0f
@@ -68,6 +80,8 @@
 #define FORMATION_SPACING   (UNIT_RADIUS*2.5f)  // gap between formation spots
 #define FORMATION_MAX_RINGS 64                  // how far out to look for free spots
 #define FACING_MIN_STEP     0.1f                // sideways step (px per tick) needed to turn around
+#define SHADOW_OFFSET       (Vector2){ 3.0f, 7.0f }   // a flyer's shadow: this far below-right of it...
+#define SHADOW_COLOR        (Color){ 0, 0, 0, 70 }     // ...a soft dark ellipse
 
 Unit units[MAX_UNITS];
 static int activeCount = 0;
@@ -135,6 +149,7 @@ static Vector2 SeparationPush(int self)
     {
         int other = near[k];
         if (other == self) continue;
+        if (UnitIsFlying(&units[other]) != UnitIsFlying(u)) continue;   // flyers and ground units pass over / under each other
 
         Vector2 away = Vector2Subtract(u->pos, units[other].pos);
         float dist = Vector2Length(away);
@@ -150,18 +165,19 @@ static Vector2 SeparationPush(int self)
     return push;
 }
 
-// Apply a step, but never into water/rock. X and Y are tried separately so
-// units slide along walls instead of sticking to them.
+// Apply a step, but never onto a tile the unit's class can't enter. X and Y
+// are tried separately so units slide along walls instead of sticking to them.
 static void MoveWithTerrain(Unit *u, Vector2 step)
 {
-    if (MapCircleWalkable((Vector2){ u->pos.x + step.x, u->pos.y }, u->radius)) u->pos.x += step.x;
-    if (MapCircleWalkable((Vector2){ u->pos.x, u->pos.y + step.y }, u->radius)) u->pos.y += step.y;
+    MoveClass mc = UnitMoveClass(u);
+    if (MapCircleWalkable(mc, (Vector2){ u->pos.x + step.x, u->pos.y }, u->radius)) u->pos.x += step.x;
+    if (MapCircleWalkable(mc, (Vector2){ u->pos.x, u->pos.y + step.y }, u->radius)) u->pos.y += step.y;
 }
 
 static void RequestPath(int id)
 {
     Unit *u = &units[id];
-    PathRequest(id, u->pos, u->target);
+    PathRequest(id, UnitMoveClass(u), u->pos, u->target);
     u->bestDist = FLT_MAX;
     u->stuckTicks = 0;
 }
@@ -276,7 +292,7 @@ void UnitsTick(void)
 
 // Body in team colour plus a type mark: archer = dark dot, worker = light
 // square, knight = dark ring, medic = white cross, mage = violet diamond,
-// scout = white arrowhead.
+// scout = white arrowhead, falcon = white wings, airship = dark gondola bar.
 // With art for the type (sprites.c), the art tinted in team colour instead.
 void UnitsDrawIcon(UnitType type, int team, Vector2 p, float radius)
 {
@@ -299,6 +315,12 @@ void UnitsDrawIcon(UnitType type, int team, Vector2 p, float radius)
         float s = radius*0.9f;
         DrawRectangleRec((Rectangle){ p.x - s*0.5f, p.y - s*0.5f, s, s }, WORKER_MARK_COLOR);
     }
+    if (type == UNIT_FALCON)   // two wings swept back from the middle (counter-clockwise points, as raylib wants)
+    {
+        DrawTriangle((Vector2){ p.x + radius*0.5f, p.y }, (Vector2){ p.x - radius*0.5f, p.y - radius*0.9f }, (Vector2){ p.x - radius*0.2f, p.y }, FALCON_MARK_COLOR);
+        DrawTriangle((Vector2){ p.x + radius*0.5f, p.y }, (Vector2){ p.x - radius*0.2f, p.y }, (Vector2){ p.x - radius*0.5f, p.y + radius*0.9f }, FALCON_MARK_COLOR);
+    }
+    if (type == UNIT_AIRSHIP) DrawRectangleRec((Rectangle){ p.x - radius*0.7f, p.y + radius*0.1f, radius*1.4f, radius*0.45f }, AIRSHIP_MARK_COLOR);
 }
 
 // Carried gold and the health bar (only once the unit has taken damage).
@@ -321,27 +343,18 @@ static void DrawUnitOverlays(const Unit *u, Vector2 p)
 // (one more draw call). So: (1) shapes underneath (selection circles, plus
 // units without art drawn complete, exactly as before sprites existed),
 // (2) every sprite in a row, all from the one atlas, (3) the overlays of the
-// units with art on top.
-void UnitsDraw(Rectangle view, float alpha)
+// units with art on top. Ground units get these three passes first, then
+// flyers get the same three on top; a flyer's first pass also draws its
+// shadow on the ground.
+static void DrawLayer(const int *visible, const Vector2 *drawPos, int count, bool flyers)
 {
-    // Ask the grid for units near the screen instead of checking all of them.
-    // The margin covers unit size and the small lerp between ticks.
-    static int visible[MAX_UNITS];
-    static Vector2 drawPos[MAX_UNITS];
-    float margin = UNIT_RADIUS*4.0f;
-    Rectangle area = { view.x - margin, view.y - margin, view.width + margin*2.0f, view.height + margin*2.0f };
-    int found = GridQuery(area, visible, MAX_UNITS);
-
-    // Pass 1: drop units hidden by fog, then the shapes.
-    int count = 0;
-    for (int k = 0; k < found; k++)
+    // Pass 1: shadows (flyers), selection circles, and units without art.
+    for (int k = 0; k < count; k++)
     {
         const Unit *u = &units[visible[k]];
-        if (u->team != PLAYER_TEAM && !FogCanSee(PLAYER_TEAM, u->pos)) continue;   // hidden by fog
-        Vector2 p = Vector2Lerp(u->prevPos, u->pos, alpha);
-        visible[count] = visible[k];
-        drawPos[count++] = p;
-
+        if (UnitIsFlying(u) != flyers) continue;
+        Vector2 p = drawPos[k];
+        if (flyers) DrawEllipse((int)(p.x + SHADOW_OFFSET.x), (int)(p.y + SHADOW_OFFSET.y), u->radius*0.9f, u->radius*0.45f, SHADOW_COLOR);
         if (u->selected) DrawCircleSector(p, u->radius + 2.0f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, UNIT_SELECTED_COLOR);
         if (!SpritesHaveUnit(u->type))
         {
@@ -354,6 +367,7 @@ void UnitsDraw(Rectangle view, float alpha)
     for (int k = 0; k < count; k++)
     {
         const Unit *u = &units[visible[k]];
+        if (UnitIsFlying(u) != flyers) continue;
         if (SpritesHaveUnit(u->type))
             SpritesDrawUnit(u->type, drawPos[k], u->radius, u->facingLeft, (u->team == PLAYER_TEAM) ? PLAYER_COLOR : AI_COLOR);
     }
@@ -362,15 +376,41 @@ void UnitsDraw(Rectangle view, float alpha)
     for (int k = 0; k < count; k++)
     {
         const Unit *u = &units[visible[k]];
+        if (UnitIsFlying(u) != flyers) continue;
         if (SpritesHaveUnit(u->type)) DrawUnitOverlays(u, drawPos[k]);
     }
 }
 
+void UnitsDraw(Rectangle view, float alpha)
+{
+    // Ask the grid for units near the screen instead of checking all of them.
+    // The margin covers unit size and the small lerp between ticks.
+    static int visible[MAX_UNITS];
+    static Vector2 drawPos[MAX_UNITS];
+    float margin = UNIT_RADIUS*4.0f;
+    Rectangle area = { view.x - margin, view.y - margin, view.width + margin*2.0f, view.height + margin*2.0f };
+    int found = GridQuery(area, visible, MAX_UNITS);
+
+    // Drop units hidden by fog; note where each one is drawn this frame.
+    int count = 0, flyers = 0;
+    for (int k = 0; k < found; k++)
+    {
+        const Unit *u = &units[visible[k]];
+        if (u->team != PLAYER_TEAM && !FogCanSee(PLAYER_TEAM, u->pos)) continue;   // hidden by fog
+        visible[count] = visible[k];
+        drawPos[count++] = Vector2Lerp(u->prevPos, u->pos, alpha);
+        flyers += UnitIsFlying(u);
+    }
+
+    DrawLayer(visible, drawPos, count, false);
+    if (flyers > 0) DrawLayer(visible, drawPos, count, true);   // above the ground units
+}
+
 // Fill `spots` with up to `count` open positions around `dest`, closest first:
-// walk square rings outward from the centre and keep every spot a unit fits
-// on. Every unit gets its own spot, so a group never fights over one point.
-// Returns how many spots were found.
-int UnitsOpenSpots(Vector2 dest, int count, Vector2 *spots)
+// walk square rings outward from the centre and keep every spot a unit of
+// that movement class fits on. Every unit gets its own spot, so a group never
+// fights over one point. Returns how many spots were found.
+int UnitsOpenSpots(MoveClass moveClass, Vector2 dest, int count, Vector2 *spots)
 {
     int found = 0;
     for (int ring = 0; ring <= FORMATION_MAX_RINGS && found < count; ring++)
@@ -381,7 +421,7 @@ int UnitsOpenSpots(Vector2 dest, int count, Vector2 *spots)
             {
                 if (abs(gx) != ring && abs(gy) != ring) continue;   // only this ring's edge
                 Vector2 p = { dest.x + gx*FORMATION_SPACING, dest.y + gy*FORMATION_SPACING };
-                if (MapCircleWalkable(p, UNIT_RADIUS)) spots[found++] = p;
+                if (MapCircleWalkable(moveClass, p, UNIT_RADIUS)) spots[found++] = p;
             }
         }
     }
@@ -416,13 +456,15 @@ static void FormationOrder(int *order, int n, const Vector2 *points, Vector2 for
     }
 }
 
-void UnitsOrderMove(const int *ids, int count, Vector2 dest)
+// One movement class at a time: formation spots must be ground a unit of
+// that class can stand on (land for ground units, water for naval ones).
+static void OrderMoveGroup(const int *ids, int count, Vector2 dest, MoveClass moveClass)
 {
     static Vector2 spots[MAX_UNITS], unitPos[MAX_UNITS];
     static int spotOrder[MAX_UNITS], unitOrder[MAX_UNITS];
     if (count <= 0) return;
 
-    int found = UnitsOpenSpots(dest, count, spots);
+    int found = UnitsOpenSpots(moveClass, dest, count, spots);
 
     // Move direction: from the group's centre toward the destination.
     Vector2 centre = { 0 };
@@ -450,6 +492,19 @@ void UnitsOrderMove(const int *ids, int count, Vector2 dest)
         units[id].leashed = false;
         units[id].healing = false;
         UnitMoveTo(id, (k < found) ? spots[spotOrder[k]] : dest);   // more units than open spots: rare
+    }
+}
+
+void UnitsOrderMove(const int *ids, int count, Vector2 dest)
+{
+    // Split the selection by movement class (keeping its order); each part
+    // gets its own formation around dest.
+    static int group[MAX_UNITS];
+    for (int mc = 0; mc < MOVE_CLASS_COUNT; mc++)
+    {
+        int n = 0;
+        for (int k = 0; k < count; k++) if (UnitMoveClass(&units[ids[k]]) == (MoveClass)mc) group[n++] = ids[k];
+        OrderMoveGroup(group, n, dest, (MoveClass)mc);
     }
 }
 
@@ -491,15 +546,34 @@ static void NonAttackersAttackMove(const int *ids, int count, Vector2 where)
     UnitsOrderAttackMove(movers, n, where);
 }
 
+// Units in the order that could attack but can't hit this target (melee on
+// a flyer): they walk to it instead, a plain move.
+static void CantHitMove(const int *ids, int count, Vector2 where, bool isBuilding, int target)
+{
+    static int movers[MAX_UNITS];
+    int n = 0;
+    for (int k = 0; k < count; k++)
+    {
+        const Unit *u = &units[ids[k]];
+        if (UNIT_STATS[u->type].damage <= 0.0f || (!isBuilding && ids[k] == target)) continue;
+        if (u->team == (isBuilding ? buildings[target].team : units[target].team)) continue;   // not an enemy: no order, like above
+        bool canHit = isBuilding ? UnitCanHitBuildings(u->type) : UnitCanHitUnit(u->type, &units[target]);
+        if (!canHit) movers[n++] = ids[k];
+    }
+    UnitsOrderMove(movers, n, where);
+}
+
 void UnitsOrderAttack(const int *ids, int count, int target)
 {
     for (int k = 0; k < count; k++)
     {
         if (ids[k] == target || units[ids[k]].team == units[target].team) continue;
         if (UNIT_STATS[units[ids[k]].type].damage <= 0.0f) continue;   // handled below
+        if (!UnitCanHitUnit(units[ids[k]].type, &units[target])) continue;   // handled below
         SetAttackTarget(ids[k], target, units[target].serial, false);
     }
     NonAttackersAttackMove(ids, count, units[target].pos);
+    CantHitMove(ids, count, units[target].pos, false, target);
 }
 
 void UnitsOrderAttackBuilding(const int *ids, int count, int building)
@@ -508,9 +582,20 @@ void UnitsOrderAttackBuilding(const int *ids, int count, int building)
     {
         if (units[ids[k]].team == buildings[building].team) continue;
         if (UNIT_STATS[units[ids[k]].type].damage <= 0.0f) continue;   // handled below
+        if (!UnitCanHitBuildings(units[ids[k]].type)) continue;        // handled below
         SetAttackTarget(ids[k], building, buildings[building].serial, true);
     }
     NonAttackersAttackMove(ids, count, BuildingCentre(building));
+    CantHitMove(ids, count, BuildingCentre(building), true, building);
+}
+
+bool UnitsCanTrain(int team, UnitType type)
+{
+    BuildingType need = UNIT_STATS[type].requires;
+    if (need == BUILDING_NONE) return true;
+    for (int b = 0; b < MAX_BUILDINGS; b++)
+        if (buildings[b].active && buildings[b].team == team && buildings[b].type == need && !buildings[b].constructing) return true;
+    return false;
 }
 
 void UnitsOrderStop(const int *ids, int count)

@@ -1,6 +1,7 @@
 # Automated tests. Separate from the game build: `make test` builds and runs them.
 #   controls_overflow_test            the Controls page at several window sizes (see the .c file)
 #   controls_overflow_test_longnames  the same, with much longer unit / building names
+#   tile_class_test                   every tile x movement class, blocking, map edge, regions
 cmake_minimum_required(VERSION 3.24)
 project(rts_tests C)
 
@@ -53,3 +54,11 @@ foreach(variant IN ITEMS "" "_longnames")
     set_source_files_properties(${dir}/ui.c PROPERTIES COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/text_hooks.h")
 endforeach()
 set_source_files_properties(controls_overflow_test.c PROPERTIES COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/text_hooks.h")
+
+# tile_class_test: TILE_INFO x movement classes, blocking, map edge, regions (no window needed).
+file(GLOB TILE_TEST_SOURCES CONFIGURE_DEPENDS ${REPO}/src/game/*.c)
+add_executable(tile_class_test tile_class_test.c text_hooks_passthrough.c ${TILE_TEST_SOURCES})   # ui.c is compiled with the hooks (a file property): pass them through
+target_include_directories(tile_class_test PRIVATE ${REPO}/src ${REPO}/src/game)
+target_compile_options(tile_class_test PRIVATE -Wall -Wextra)
+set_target_properties(tile_class_test PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+target_link_libraries(tile_class_test PRIVATE raylib m)

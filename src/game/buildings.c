@@ -75,13 +75,13 @@ float BuildingDistance(int id, Vector2 p)
 
 // The point on the wall nearest `from`, pushed outward so a unit of `radius`
 // fits there, then snapped to the nearest open spot.
-Vector2 BuildingApproachPoint(int id, Vector2 from, float radius)
+Vector2 BuildingApproachPoint(int id, Vector2 from, float radius, MoveClass moveClass)
 {
     Vector2 wall = ClosestPointOnRect(BuildingRect(id), from);
     Vector2 out = Vector2Subtract(wall, BuildingCentre(id));
     out = Vector2Scale(Vector2Normalize(out), radius + 2.0f);
     Vector2 spot = Vector2Add(wall, out);
-    if (MapCircleWalkable(spot, radius)) return spot;
+    if (MapCircleWalkable(moveClass, spot, radius)) return spot;
 
     // Blocked (e.g. the corner touches a neighbouring building): walk round the
     // building just outside its walls and take the open spot nearest to `from`.
@@ -99,12 +99,12 @@ Vector2 BuildingApproachPoint(int id, Vector2 from, float radius)
         Vector2 cand[2] = { p, q };
         for (int k = 0; k < 2; k++)
         {
-            if (!MapCircleWalkable(cand[k], radius)) continue;
+            if (!MapCircleWalkable(moveClass, cand[k], radius)) continue;
             float d = Vector2Distance(cand[k], from);
             if (!found || d < bestDist) { found = true; bestDist = d; spot = cand[k]; }
         }
     }
-    if (!found) UnitsOpenSpots(spot, 1, &spot);   // boxed in all round: nearest open ground
+    if (!found) UnitsOpenSpots(moveClass, spot, 1, &spot);   // boxed in all round: nearest open spot
     return spot;
 }
 
@@ -177,12 +177,12 @@ void BuildingSetRally(int id, Vector2 point)
     buildings[id].rally = point;
 }
 
-// Where trained units appear: an open spot just below the building.
-static Vector2 SpawnSpot(int id)
+// Where trained units appear: an open spot (for that movement class) just below the building.
+static Vector2 SpawnSpot(int id, MoveClass moveClass)
 {
     Rectangle r = BuildingRect(id);
     Vector2 spot = { r.x + r.width*0.5f, r.y + r.height + UNIT_RADIUS*2.0f };
-    UnitsOpenSpots(spot, 1, &spot);
+    UnitsOpenSpots(moveClass, spot, 1, &spot);
     return spot;
 }
 
@@ -196,8 +196,8 @@ static void PushUnitsOut(int id)
     for (int k = 0; k < count; k++)
     {
         Unit *u = &units[found[k]];
-        if (MapCircleWalkable(u->pos, u->radius)) continue;
-        UnitsOpenSpots(u->pos, 1, &u->pos);
+        if (MapCircleWalkable(UnitMoveClass(u), u->pos, u->radius)) continue;   // flyers aren't in the way
+        UnitsOpenSpots(UnitMoveClass(u), u->pos, 1, &u->pos);
         u->prevPos = u->pos;
     }
 }
@@ -242,7 +242,7 @@ bool BuildingCanPlace(BuildingType type, Vector2 centre)
     {
         for (int x = tx; x < tx + size; x++)
         {
-            if (!MapTileWalkable(x, y)) return false;
+            if (!MapTileWalkable(MOVE_GROUND, x, y)) return false;
         }
     }
     // ...and it mustn't cover a gold node.
@@ -275,7 +275,7 @@ int BuildingPlace(BuildingType type, int team, Vector2 centre, bool unfinished)
         };
         MapSetBlocked(tx, ty, size, size, true);
         PushUnitsOut(i);
-        buildings[i].rally = SpawnSpot(i);   // default rally: right where units appear
+        buildings[i].rally = SpawnSpot(i, MOVE_GROUND);   // default rally: right where (ground) units appear
         return i;
     }
     return -1;
@@ -294,6 +294,7 @@ bool BuildingQueueTrain(int id, UnitType type)
     Building *b = &buildings[id];
     if (!b->active || b->constructing || b->queueCount >= MAX_QUEUE) return false;
     if (UNIT_STATS[type].trainedAt != b->type) return false;
+    if (!UnitsCanTrain(b->team, type)) return false;   // its `requires` building (player and AI alike)
     if (!EconomySpend(b->team, UNIT_STATS[type].cost)) return false;
     b->queue[b->queueCount++] = type;
     return true;
@@ -331,7 +332,7 @@ void BuildingsOrderConstruct(const int *ids, int count, int building)
         u->buildSite = building;
         u->buildSiteSerial = buildings[building].serial;
         u->orderRetries = BUILD_RETRIES;
-        UnitMoveTo(id, BuildingApproachPoint(building, u->pos, u->radius));
+        UnitMoveTo(id, BuildingApproachPoint(building, u->pos, u->radius, UnitMoveClass(u)));
     }
 }
 
@@ -369,7 +370,7 @@ Vector2 BuildingsWorkerTick(int id)
     }
 
     if (u->moving) return UnitFollowPath(id);
-    if (u->orderRetries-- > 0) UnitMoveTo(id, BuildingApproachPoint(site, u->pos, u->radius));
+    if (u->orderRetries-- > 0) UnitMoveTo(id, BuildingApproachPoint(site, u->pos, u->radius, UnitMoveClass(u)));
     else { u->buildOrder = false; UnitStop(id); }   // can't get there
     return none;
 }
@@ -385,7 +386,7 @@ void BuildingsTick(void)
 
         // Done: spawn just below the building, then head for the rally point.
         // If the unit pool is full, wait.
-        Vector2 spot = SpawnSpot(i);
+        Vector2 spot = SpawnSpot(i, UNIT_STATS[b->queue[0]].moveClass);
         int unit = UnitSpawn(spot, b->queue[0], b->team);
         if (unit == -1) continue;
         if (Vector2Distance(spot, b->rally) > RALLY_MIN_DIST) UnitsOrderMove(&unit, 1, b->rally);

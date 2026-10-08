@@ -13,7 +13,8 @@
 //   gold           with an amount field
 //   erase          removes the object under the cursor
 // Objects can only go where a map file allows them (MapDocObjectFits), and
-// painting water/rock skips tiles under objects, so the map stays valid. The
+// painting skips tiles whose object couldn't stand on the new tile (water
+// under a Base), so the map stays valid. The
 // unit brush skips tiles that don't allow a unit (water, rock, taken), and its
 // ghost shows every tile: green = a unit goes there, red = skipped.
 //
@@ -70,6 +71,7 @@ static char     nameText[MAP_NAME_LEN] = "My map";
 static bool     tilesDirty = true;
 static bool     loading = false;  // the map list is open
 static float    panelScroll = 0.0f;
+static float    panelContentH = 0.0f;   // the tool list's height, measured while drawing (reference px)
 static char     testPlayPath[300];
 
 static unsigned char undo[UNDO_STEPS][MAP_W*MAP_H];
@@ -214,13 +216,13 @@ static void PopUndo(void)
 static void PaintTiles(int cx, int cy)
 {
     int half = BRUSH_SIZES[brushIndex]/2;
-    bool blocking = !TILE_INFO[toolType].walkable;
     for (int y = cy - half; y <= cy + half; y++)
     {
         for (int x = cx - half; x <= cx + half; x++)
         {
             if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) continue;
-            if (blocking && ObjectAt(x, y) != -1) continue;   // never put water/rock under an object
+            int o = ObjectAt(x, y);   // never paint a tile the object on it can't stand on (water under a Base...)
+            if (o != -1 && !TileAllows((TileType)toolType, MapObjectClass(&doc.objects[o]))) continue;
             doc.tiles[y*doc.width + x] = (unsigned char)toolType;
         }
     }
@@ -502,7 +504,10 @@ static EditorAction DrawPanel(void)
     Rectangle area = { panel.x + Ui(PAD), panel.y + Ui(PAD), panel.width - Ui(PAD)*2.0f, panel.height - Ui(PAD)*2.0f };
     float w = area.width - Ui(8.0f);   // room for the scrollbar
     float x = area.x;
-    float y = area.y + UiScrollBegin(area, Ui(1010.0f), &panelScroll);
+    // The list's height is measured as it's drawn (last frame's), so new tile,
+    // unit or building buttons are always reachable by scrolling.
+    float top = area.y + UiScrollBegin(area, Ui(panelContentH > 0.0f ? panelContentH : 1100.0f), &panelScroll);
+    float y = top;
     Rectangle a, b;
 
     UiLabel("Map Editor", x, y, Ui(24.0f), RAYWHITE);
@@ -560,6 +565,7 @@ static EditorAction DrawPanel(void)
     if (UiToggle(a, "Gold", tool == TOOL_GOLD)) tool = TOOL_GOLD;
     UiTextField(b, goldText, sizeof(goldText), true);
     if (UiToggle(Row(x, &y, w), "Erase object", tool == TOOL_ERASE)) tool = TOOL_ERASE;
+    panelContentH = (y - top)/UiScale();
 
     UiScrollEnd();
     return action;

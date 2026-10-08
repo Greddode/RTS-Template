@@ -11,6 +11,6 @@
 
 void GridRebuild(void);                              // call after units move, and once before the first query
 int  GridQuery(Rectangle area, int *out, int maxOut); // unit ids whose centre is in `area`
-int  GridFindNearestEnemy(Vector2 pos, float maxDist, int myTeam);   // closest live, not-doomed enemy, or -1
+int  GridFindNearestEnemy(Vector2 pos, float maxDist, int myTeam, bool ground, bool air);   // closest live, visible, not-doomed enemy (ground ones / flyers), or -1
 
 #endif

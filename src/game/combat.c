@@ -31,14 +31,21 @@
 // first; enemy buildings only when no unit is in reach. Workers don't
 // auto-attack.
 //
+// What a unit can hit (hitsGround / hitsAir in UNIT_STATS; UnitCanHitUnit in
+// units.h): flyers only by hitsAir types, everything else (ground units,
+// boats, buildings) only by hitsGround types. Every place below that picks,
+// keeps or damages a target asks it, so a Knight never targets, chases or
+// hurts a Falcon, and an Airship's bombs pass through flyers.
+//
 // Damage: CombatDamage() turns a hit's base damage into what the target
 // actually loses, using its armor (the damage/armor table in config.h). It
 // runs once, when the attack happens: melee damage lands at once, and a
 // projectile carries the already-reduced number, so "incoming damage" below
 // is exact. Buildings take the plain base damage.
 //
-// Splash (Mage): a unit with splashRadius fires a slow bolt at the spot its
-// target stood on when it fired. Whatever is near that spot when the bolt lands
+// Splash (Mage, Airship): a unit with splashRadius fires a slow bolt (magic) or
+// bomb (other damage types) at the spot its target stood on when it fired.
+// Whatever is near that spot when it lands, and that the shooter could hit,
 // gets hit, so a unit that walks away dodges it, and friends nearby get hit
 // too (friendly fire is intended). Damage falls off from the centre to
 // splashFalloff x at the edge, then goes through CombatDamage() per victim.
@@ -75,6 +82,7 @@
 #define BOLT_RADIUS         3.0f
 #define BOLT_TRAIL          3                    // trail dots behind a bolt
 #define BOLT_COLOR          (Color){ 150, 120, 255, 255 }
+#define BOMB_COLOR          (Color){ 60, 55, 50, 255 }   // non-magic splash (Airship bombs)
 #define SPLASH_FX_TICKS     9                    // the ring grows for 0.3 s
 #define SPLASH_RING_WIDTH   2.0f
 #define MAX_SPLASH_FX       128
@@ -102,6 +110,7 @@ typedef struct SplashFx {
     Vector2 pos;
     float   radius;
     int     age;   // ticks
+    Color   color; // the bolt's or bomb's
 } SplashFx;
 static SplashFx splashFx[MAX_SPLASH_FX];
 
@@ -173,7 +182,7 @@ static bool FriendsInSplash(const Unit *u, Vector2 at)
     float q = r + SPLASH_QUERY_MARGIN;
     int count = GridQuery((Rectangle){ at.x - q, at.y - q, q*2.0f, q*2.0f }, near, MAX_UNITS);
     for (int k = 0; k < count; k++)
-        if (units[near[k]].team == u->team && Vector2Distance(units[near[k]].pos, at) <= r) return true;
+        if (units[near[k]].team == u->team && UnitCanHitUnit(u->type, &units[near[k]]) && Vector2Distance(units[near[k]].pos, at) <= r) return true;
     return false;
 }
 
@@ -186,7 +195,7 @@ static bool Picky(const Unit *u)
 }
 
 // Nearest enemy unit within maxDist that a picky unit may fire at: visible,
-// not doomed, not closer than its minRange, and no friends in the splash.
+// not doomed, one it can hit, not closer than its minRange, and no friends in the splash.
 static int FindTarget(const Unit *u, float maxDist)
 {
     static int near[MAX_UNITS];
@@ -198,6 +207,7 @@ static int FindTarget(const Unit *u, float maxDist)
     {
         const Unit *t = &units[near[k]];
         if (t->team == u->team || !FogCanSee(u->team, t->pos) || t->hp <= t->incomingDamage) continue;
+        if (!UnitCanHitUnit(u->type, t)) continue;   // a flyer, for a unit without hitsAir (and so on)
         float d = Vector2Distance(u->pos, t->pos);
         if (d > maxDist || d < minRange || (best != -1 && d >= bestDist)) continue;
         if (FriendsInSplash(u, t->pos)) continue;
@@ -233,8 +243,8 @@ static bool AttackNearest(int id, float radius)
     bool leashed = u->leashed;
     Vector2 home = u->leashHome;
     bool picky = Picky(u);
-    int enemy = picky ? FindTarget(u, radius) : GridFindNearestEnemy(u->pos, radius, u->team);
-    int building = (enemy == -1) ? BuildingsFindNearestEnemy(u->pos, radius, u->team) : -1;
+    int enemy = picky ? FindTarget(u, radius) : GridFindNearestEnemy(u->pos, radius, u->team, UNIT_STATS[u->type].hitsGround, UNIT_STATS[u->type].hitsAir);
+    int building = (enemy == -1 && UnitCanHitBuildings(u->type)) ? BuildingsFindNearestEnemy(u->pos, radius, u->team) : -1;
     if (building != -1 && picky && (BuildingDistance(building, u->pos) < UNIT_STATS[u->type].minRange ||
                                     FriendsInSplash(u, LandingPoint(true, building, u->pos)))) building = -1;
     if (enemy != -1) UnitsOrderAttack(&id, 1, enemy);
@@ -283,7 +293,8 @@ static void FireBolt(const Unit *u, Vector2 land)
     *p = (Projectile){ .active = true, .pos = u->pos, .prevPos = u->pos, .bolt = true, .land = land, .shooter = u->type };
 }
 
-// A bolt landed: hit every unit (any team) and building within the splash.
+// A bolt landed: hit every unit (any team) and building within the splash
+// that the shooter could hit (an Airship's bombs pass through flyers).
 static void Splash(Vector2 at, UnitType shooter)
 {
     const UnitStats *s = &UNIT_STATS[shooter];
@@ -295,18 +306,18 @@ static void Splash(Vector2 at, UnitType shooter)
     {
         const Unit *t = &units[near[k]];
         float d = Vector2Distance(t->pos, at);
-        if (!t->active || d > r) continue;
+        if (!t->active || d > r || !UnitCanHitUnit(shooter, t)) continue;
         float base = s->damage*(1.0f - (1.0f - s->splashFalloff)*d/r);   // full at the centre, falloff x at the edge
         DealDamage(false, near[k], CombatDamage(base, s->damageType, UNIT_STATS[t->type].armorType, UNIT_STATS[t->type].armor));
     }
-    for (int b = 0; b < MAX_BUILDINGS; b++)   // the building pool is small; distance to the nearest wall
+    for (int b = 0; b < MAX_BUILDINGS && UnitCanHitBuildings(shooter); b++)   // the building pool is small; distance to the nearest wall
     {
         if (!buildings[b].active) continue;
         float d = BuildingDistance(b, at);
         if (d <= r) DealDamage(true, b, s->damage*(1.0f - (1.0f - s->splashFalloff)*d/r));
     }
     for (int i = 0; i < MAX_SPLASH_FX; i++)
-        if (!splashFx[i].active) { splashFx[i] = (SplashFx){ true, at, r, 0 }; break; }
+        if (!splashFx[i].active) { splashFx[i] = (SplashFx){ true, at, r, 0, (s->damageType == DAMAGE_MAGIC) ? BOLT_COLOR : BOMB_COLOR }; break; }
 }
 
 // The target is inside minRange: pick something further out, or back off to
@@ -326,7 +337,7 @@ static Vector2 TooClose(int id, bool isBuilding, int target)
     {
         u->chaseTicks = CHASE_RETHINK_TICKS;
         if (AttackNearest(id, SearchRadius(u))) return none;   // something it can fire at
-        u->chaseDirect = MapLineClear(u->pos, spot, u->radius);
+        u->chaseDirect = MapLineClear(UnitMoveClass(u), u->pos, spot, u->radius);
         if (u->chaseDirect) { if (u->moving) UnitStop(id); }
         else UnitMoveTo(id, spot);
     }
@@ -340,8 +351,11 @@ Vector2 CombatUnitTick(int id)
     Vector2 none = { 0 };
     if (UNIT_STATS[u->type].damage <= 0.0f) { u->attacking = false; return none; }   // can't attack: never chase
 
-    // A target that walked into the fog counts as gone: you can't chase what you can't see.
-    bool alive = TargetAlive(u->attackTargetIsBuilding, u->attackTarget, u->attackTargetSerial) && TargetVisible(u);
+    // A target that walked into the fog counts as gone: you can't chase what you
+    // can't see. So does one it can't hit (orders already filter those out;
+    // this keeps it true whatever set the target).
+    bool alive = TargetAlive(u->attackTargetIsBuilding, u->attackTarget, u->attackTargetSerial) && TargetVisible(u) &&
+                 (u->attackTargetIsBuilding ? UnitCanHitBuildings(u->type) : UnitCanHitUnit(u->type, &units[u->attackTarget]));
     if (!alive || TargetDoomed(u->attackTargetIsBuilding, u->attackTarget))
     {
         // Switch right away (same tick) to the nearest enemy worth attacking.
@@ -412,11 +426,11 @@ Vector2 CombatUnitTick(int id)
 
     // Out of range: chase. Re-plan every CHASE_RETHINK_TICKS.
     // Units are chased at their centre; buildings at an open spot by the wall.
-    Vector2 goal = isBuilding ? BuildingApproachPoint(target, u->pos, u->radius) : units[target].pos;
+    Vector2 goal = isBuilding ? BuildingApproachPoint(target, u->pos, u->radius, UnitMoveClass(u)) : units[target].pos;
     if (--u->chaseTicks <= 0)
     {
         u->chaseTicks = CHASE_RETHINK_TICKS;
-        u->chaseDirect = MapLineClear(u->pos, goal, u->radius);
+        u->chaseDirect = MapLineClear(UnitMoveClass(u), u->pos, goal, u->radius);
         if (u->chaseDirect)
         {
             if (u->moving) UnitStop(id);
@@ -510,13 +524,14 @@ void CombatProjectilesDraw(Rectangle view, float alpha)
         if (!FogCanSee(PLAYER_TEAM, pos)) continue;          // hidden by fog
         if (!p->bolt) { DrawCircleSector(pos, PROJECTILE_RADIUS, 0.0f, 360.0f, 6, PROJECTILE_COLOR); continue; }
 
+        Color c = (UNIT_STATS[p->shooter].damageType == DAMAGE_MAGIC) ? BOLT_COLOR : BOMB_COLOR;
         Vector2 back = Vector2Subtract(p->prevPos, p->pos);   // one tick of flight, backwards
         for (int k = BOLT_TRAIL; k >= 1; k--)
         {
             Vector2 dot = Vector2Add(pos, Vector2Scale(back, k*0.5f));
-            DrawCircleSector(dot, BOLT_RADIUS*(1.0f - k*0.2f), 0.0f, 360.0f, 6, Fade(BOLT_COLOR, 0.8f - k*0.2f));
+            DrawCircleSector(dot, BOLT_RADIUS*(1.0f - k*0.2f), 0.0f, 360.0f, 6, Fade(c, 0.8f - k*0.2f));
         }
-        DrawCircleSector(pos, BOLT_RADIUS, 0.0f, 360.0f, 8, BOLT_COLOR);
+        DrawCircleSector(pos, BOLT_RADIUS, 0.0f, 360.0f, 8, c);
     }
     for (int i = 0; i < MAX_SPLASH_FX; i++)
     {
@@ -525,7 +540,7 @@ void CombatProjectilesDraw(Rectangle view, float alpha)
         if (!FogCanSee(PLAYER_TEAM, f->pos)) continue;   // the damage happened anyway; only the picture is hidden
         float t = (f->age + alpha)/SPLASH_FX_TICKS;
         float r = f->radius*(0.3f + 0.7f*t);
-        DrawRing(f->pos, r - SPLASH_RING_WIDTH, r, 0.0f, 360.0f, 24, Fade(BOLT_COLOR, 1.0f - t));
+        DrawRing(f->pos, r - SPLASH_RING_WIDTH, r, 0.0f, 360.0f, 24, Fade(f->color, 1.0f - t));
     }
 }
 

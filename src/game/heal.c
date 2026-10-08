@@ -176,7 +176,7 @@ Vector2 HealUnitTick(int id)
     if (--u->chaseTicks <= 0)
     {
         u->chaseTicks = HEAL_CHASE_RETHINK_TICKS;
-        u->chaseDirect = MapLineClear(u->pos, goal, u->radius);
+        u->chaseDirect = MapLineClear(UnitMoveClass(u), u->pos, goal, u->radius);
         if (u->chaseDirect) { if (u->moving) UnitStop(id); }
         else if (!u->moving || Vector2Distance(u->target, goal) > TILE_SIZE) UnitMoveTo(id, goal);
     }

@@ -3,6 +3,7 @@
 #define PATH_H_INCLUDED
 
 #include "raylib.h"
+#include "config.h"   // MoveClass
 #include <stdbool.h>
 
 #define PATH_BUDGET_MS      1.0    // max pathfinding time per frame
@@ -11,7 +12,8 @@
 
 typedef enum { PATH_NONE, PATH_PENDING, PATH_READY, PATH_FAILED } PathStatus;
 
-void       PathRequest(int unit, Vector2 from, Vector2 to);  // queue a search (replaces any older one for this unit)
+void       PathRequest(int unit, MoveClass moveClass, Vector2 from, Vector2 to);  // queue a search (replaces any older one); AIR: answered at once, straight
+
 void       PathCancel(int unit);
 void       PathUpdate(void);                                 // call once per frame: works the queue within budget
 
@@ -23,10 +25,12 @@ int        PathQueueLength(void);
 double     PathLastFrameMs(void);                            // time PathUpdate() used last frame
 void       PathReset(void);                                  // drop every request and path (new game)
 
-// Connected areas: tiles you can walk between share a region number (0 = not
-// walkable). Same-region means pathfinding can get there. Rebuild after the
-// map or buildings change; it's a flood fill over every tile (fast).
+// Connected areas, per movement class: tiles a unit of that class can move
+// between share a region number (0 = it can't be there). Same region means
+// pathfinding can get there. Rebuild after the map or buildings change: a
+// flood fill over every tile (fast) for each class a unit type uses; a class
+// no unit uses is filled only when PathRegion() asks about it.
 void       PathComputeRegions(void);
-int        PathRegion(Vector2 worldPos);
+int        PathRegion(MoveClass moveClass, Vector2 worldPos);
 
 #endif

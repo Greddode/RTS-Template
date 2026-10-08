@@ -32,7 +32,7 @@
 // one while the team owns a FINISHED building of that type (BuildingsCanBuild()).
 // `description`: a sentence the inspector shows for it ("" = no box).
 // Map files and the editor can place anything.
-typedef enum { BUILDING_NONE = -1, BUILDING_BASE, BUILDING_BARRACKS, BUILDING_ARCHERY_RANGE, BUILDING_ACADEMY, BUILDING_TYPE_COUNT } BuildingType;
+typedef enum { BUILDING_NONE = -1, BUILDING_BASE, BUILDING_BARRACKS, BUILDING_ARCHERY_RANGE, BUILDING_ACADEMY, BUILDING_AIR_FACTORY, BUILDING_TYPE_COUNT } BuildingType;
 
 typedef struct BuildingStats {
     const char *name;
@@ -53,6 +53,7 @@ static const BuildingStats BUILDING_STATS[BUILDING_TYPE_COUNT] = {
     [BUILDING_BARRACKS]      = { "Barracks",       900.0f, 2,    150,  25.0f,     KEY_K,  false,   BUILDING_SIGHT, BUILDING_NONE,     "Trains Melee soldiers and Knights, the front line of your army." },
     [BUILDING_ARCHERY_RANGE] = { "Archery Range",  800.0f, 2,    175,  25.0f,     KEY_R,  false,   BUILDING_SIGHT, BUILDING_NONE,     "Trains Archers and Scouts, who fight and scout from a distance." },
     [BUILDING_ACADEMY]       = { "Academy",       1000.0f, 2,    450,  35.0f,     KEY_E,  false,   BUILDING_SIGHT, BUILDING_BARRACKS, "Trains Medics and Mages, once you own a finished Barracks." },
+    [BUILDING_AIR_FACTORY]   = { "Air Factory",    900.0f, 2,    250,  30.0f,     KEY_F,  false,   BUILDING_SIGHT, BUILDING_BARRACKS, "Trains Falcons and Airships, once you own a finished Barracks." },
 };
 
 // --- Damage and armor ---------------------------------------------------------------
@@ -78,13 +79,27 @@ static const float DAMAGE_VS_ARMOR[DAMAGE_TYPE_COUNT][ARMOR_TYPE_COUNT] = {
 // Armor never blocks everything: a hit always does at least this fraction of its base damage.
 #define DAMAGE_MIN_FRACTION 0.1f
 
+// Movement classes: what a unit moves over. TILE_INFO (map.c) says which
+// classes can cross each tile; MapTileWalkable(class, x, y) is the one check.
+//   MOVE_GROUND  walks on land (grass, dirt, gravel); buildings block it
+//   MOVE_NAVAL   sails on water; buildings block it too
+//   MOVE_AIR     flies in a straight line over every tile whose `air` column
+//                is true (all of them by default) and over buildings; it
+//                never pathfinds, and it stays inside the map
+typedef enum { MOVE_GROUND, MOVE_NAVAL, MOVE_AIR, MOVE_CLASS_COUNT } MoveClass;
+
 // Unit types and their stats. To add a type: add it to the enum, give it a row
 // in UNIT_STATS, and (optionally) art in assets/sprites/units or a look in
 // UnitsDrawIcon(). `trainedAt` puts a Train button on that building;
 // BUILDING_NONE means it can't be trained. Columns a unit doesn't use stay 0
-// (healing, splash, minRange): 0 means "off". `description` is what the
-// inspector shows for it ("" = no box).
-typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UNIT_MAGE, UNIT_SCOUT, UNIT_TYPE_COUNT } UnitType;
+// (healing, splash, minRange): 0 means "off". `moveClass`: see MoveClass
+// above. `description` is what the inspector shows for it ("" = no box).
+// What it can hit: `hitsGround` = ground and naval units and buildings,
+// `hitsAir` = flying units (MOVE_AIR). A unit never targets, chases or
+// damages (splash included) what it can't hit. Healers: false, false.
+// `requires`: besides the building in `trainedAt`, the team must own a
+// FINISHED one of these to train it (UnitsCanTrain); BUILDING_NONE = nothing.
+typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UNIT_MAGE, UNIT_SCOUT, UNIT_FALCON, UNIT_AIRSHIP, UNIT_TYPE_COUNT } UnitType;
 
 typedef struct UnitStats {
     const char  *name;
@@ -104,21 +119,27 @@ typedef struct UnitStats {
     bool  canHeal;    // healer (heal.c): heals damaged allies instead of attacking (give it damage 0)
     float healRate;   // HP per second it gives its target
     float healRange;  // world pixels from its centre to the target's centre
-    float splashRadius;   // > 0: fires a bolt that hits EVERY unit and building this close to where it lands (friends too)
+    float splashRadius;   // > 0: fires a bolt that hits every unit and building this close to where it lands that it could hit (friends too)
     float splashFalloff;  // damage at the edge of the splash, as a fraction of the centre's (1 = same everywhere)
     float minRange;       // won't fire at targets closer than this; backs off or picks another (0 = none)
+    bool  hitsGround;     // can attack ground / naval units and buildings
+    bool  hitsAir;        // can attack flying units
+    BuildingType requires;   // must own a finished one of these to train it (besides trainedAt); BUILDING_NONE = nothing
+    MoveClass moveClass;  // MOVE_GROUND, MOVE_NAVAL or MOVE_AIR
     const char *description;   // shown in the inspector (selected, or hovering its Train button); "" = none
 } UnitStats;
 
 static const UnitStats UNIT_STATS[UNIT_TYPE_COUNT] = {
-    //                 name      trainedAt               hotkey  hp      damage  damageType     range   cooldown  speed  armor  armorType     cost  trainTime  sight       canHeal  healRate  healRange  splash  falloff  minRange  description
-    [UNIT_MELEE]  = { "Melee",  BUILDING_BARRACKS,      KEY_M,  120.0f, 12.0f,  DAMAGE_BLUNT,   16.0f, 0.8f,     75.0f, 1.0f,  ARMOR_MEDIUM, 75,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f, "A cheap, sturdy foot soldier whose mace crushes heavy armor." },
-    [UNIT_ARCHER] = { "Archer", BUILDING_ARCHERY_RANGE, KEY_C,   70.0f,  9.0f,  DAMAGE_PIERCE, 120.0f, 1.2f,     65.0f, 0.0f,  ARMOR_LIGHT,  100,  7.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f, "Shoots from a distance, deadly against light armor but weak against plate." },
-    [UNIT_WORKER] = { "Worker", BUILDING_BASE,          KEY_W,   40.0f,  4.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  50,   5.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f, "Mines gold and constructs buildings, but barely fights." },
-    [UNIT_KNIGHT] = { "Knight", BUILDING_BARRACKS,      KEY_N,  300.0f, 18.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     55.0f, 2.0f,  ARMOR_HEAVY,  175,  10.0f,     UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f, "A slow, heavily armored soldier that hits hard and shrugs off arrows." },
-    [UNIT_MEDIC]  = { "Medic",  BUILDING_ACADEMY,       KEY_D,   60.0f,  0.0f,  DAMAGE_PIERCE,   0.0f, 0.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  125,  8.0f,      UNIT_SIGHT, true,    8.0f,     64.0f,     0.0f,   0.0f,    0.0f, "Heals wounded allies nearby instead of attacking." },
-    [UNIT_MAGE]   = { "Mage",   BUILDING_ACADEMY,       KEY_G,   50.0f, 30.0f,  DAMAGE_MAGIC,  200.0f, 2.5f,     50.0f, 0.0f,  ARMOR_LIGHT,  200,  12.0f,     UNIT_SIGHT, false,   0.0f,     0.0f,      48.0f,  0.3f,    72.0f, "Hurls magic bolts that hit everything where they land, friends too, but can't fire at close range." },
-    [UNIT_SCOUT]  = { "Scout",  BUILDING_ARCHERY_RANGE, KEY_O,   35.0f,  4.0f,  DAMAGE_PIERCE, 100.0f, 1.0f,    110.0f, 0.0f,  ARMOR_LIGHT,  60,   5.0f,      11,         false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f, "A fast, far-sighted rider for finding the enemy, fragile in a fight." },
+    //                  name       trainedAt               hotkey  hp      damage  damageType     range   cooldown  speed  armor  armorType     cost  trainTime  sight       canHeal  healRate  healRange  splash  falloff  minRange  hitsGround  hitsAir  requires          moveClass    description
+    [UNIT_MELEE]   = { "Melee",   BUILDING_BARRACKS,      KEY_M,  120.0f, 12.0f,  DAMAGE_BLUNT,   16.0f, 0.8f,     75.0f, 1.0f,  ARMOR_MEDIUM, 75,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       false,   BUILDING_NONE,    MOVE_GROUND, "A cheap, sturdy foot soldier whose mace crushes heavy armor." },
+    [UNIT_ARCHER]  = { "Archer",  BUILDING_ARCHERY_RANGE, KEY_C,   70.0f,  9.0f,  DAMAGE_PIERCE, 120.0f, 1.2f,     65.0f, 0.0f,  ARMOR_LIGHT,  100,  7.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       true,    BUILDING_NONE,    MOVE_GROUND, "Shoots from a distance, deadly against light armor but weak against plate." },
+    [UNIT_WORKER]  = { "Worker",  BUILDING_BASE,          KEY_W,   40.0f,  4.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  50,   5.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       false,   BUILDING_NONE,    MOVE_GROUND, "Mines gold and constructs buildings, but barely fights." },
+    [UNIT_KNIGHT]  = { "Knight",  BUILDING_BARRACKS,      KEY_N,  300.0f, 18.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     55.0f, 2.0f,  ARMOR_HEAVY,  175,  10.0f,     UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       false,   BUILDING_NONE,    MOVE_GROUND, "A slow, heavily armored soldier that hits hard and shrugs off arrows." },
+    [UNIT_MEDIC]   = { "Medic",   BUILDING_ACADEMY,       KEY_D,   60.0f,  0.0f,  DAMAGE_PIERCE,   0.0f, 0.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  125,  8.0f,      UNIT_SIGHT, true,    8.0f,     64.0f,     0.0f,   0.0f,    0.0f,     false,      false,   BUILDING_NONE,    MOVE_GROUND, "Heals wounded allies nearby instead of attacking." },
+    [UNIT_MAGE]    = { "Mage",    BUILDING_ACADEMY,       KEY_G,   50.0f, 30.0f,  DAMAGE_MAGIC,  200.0f, 2.5f,     50.0f, 0.0f,  ARMOR_LIGHT,  200,  12.0f,     UNIT_SIGHT, false,   0.0f,     0.0f,      48.0f,  0.3f,    72.0f,    true,       true,    BUILDING_NONE,    MOVE_GROUND, "Hurls magic bolts that hit everything where they land, friends too, but can't fire at close range." },
+    [UNIT_SCOUT]   = { "Scout",   BUILDING_ARCHERY_RANGE, KEY_O,   35.0f,  4.0f,  DAMAGE_PIERCE, 100.0f, 1.0f,    110.0f, 0.0f,  ARMOR_LIGHT,  60,   5.0f,      11,         false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       true,    BUILDING_NONE,    MOVE_GROUND, "A fast, far-sighted rider for finding the enemy, fragile in a fight." },
+    [UNIT_FALCON]  = { "Falcon",  BUILDING_AIR_FACTORY,   KEY_L,   45.0f,  6.0f,  DAMAGE_PIERCE,  90.0f, 0.9f,    140.0f, 0.0f,  ARMOR_LIGHT,  70,   6.0f,      9,          false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       true,    BUILDING_NONE,    MOVE_AIR,    "A very fast, fragile flyer that pecks at air and ground from a distance." },
+    [UNIT_AIRSHIP] = { "Airship", BUILDING_AIR_FACTORY,   KEY_U,  420.0f, 28.0f,  DAMAGE_BLUNT,   24.0f, 3.0f,     38.0f, 3.0f,  ARMOR_HEAVY,  300,  18.0f,     8,          false,   0.0f,     0.0f,      44.0f,  0.5f,    0.0f,     true,       false,   BUILDING_ACADEMY, MOVE_AIR,    "A slow, armored airship that bombs everything on the ground below, friends too, but can't hit flyers." },
 };
 
 // Auto-targeting leash: an idle unit that starts chasing an enemy on its own
@@ -221,6 +242,7 @@ static const ControlInfo CONTROLS[] = {
 #define AI_BARRACKS_QUEUE       2               // combat units queued per production building; "full" means this many
 #define AI_EXTRA_BARRACKS_GOLD  600             // more gold banked than this, every Barracks full: build another
 #define AI_MAX_BARRACKS         3               // cap on Barracks (finished or being built)
+#define AI_ANTI_AIR_PER_FLYER   2               // units that can hit air (hitsAir) it wants per player flyer it sees
 
 // Tech buildings: after its first Barracks the AI builds one of each, in this order (each once
 // the one before is finished, and only when BuildingsCanBuild() allows it), and rebuilds them if
