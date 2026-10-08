@@ -233,7 +233,7 @@ void EconomyDrawHud(int team)
 {
     const char *text = TextFormat("Gold: %d", gold[team]);
     float size = Ui(22.0f);
-    float w = (float)MeasureText(text, (int)size);
+    float w = UiTextWidth(text, size);
     float x = GetScreenWidth() - w - Ui(14.0f);   // top-right corner
     UiPanel((Rectangle){ x - Ui(14.0f), 0.0f, w + Ui(28.0f), Ui(34.0f) });
     UiLabel(text, x, Ui(6.0f), size, GOLD);

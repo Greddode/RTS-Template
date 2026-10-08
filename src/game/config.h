@@ -30,6 +30,7 @@
 // If it has a cost and a hotkey, workers can build it (it appears in the
 // inspector's Build buttons automatically). `requires`: workers can only start
 // one while the team owns a FINISHED building of that type (BuildingsCanBuild()).
+// `description`: a sentence the inspector shows for it ("" = no box).
 // Map files and the editor can place anything.
 typedef enum { BUILDING_NONE = -1, BUILDING_BASE, BUILDING_BARRACKS, BUILDING_ARCHERY_RANGE, BUILDING_ACADEMY, BUILDING_TYPE_COUNT } BuildingType;
 
@@ -43,14 +44,15 @@ typedef struct BuildingStats {
     bool        dropOff;     // workers can bring gold here
     int         sight;       // fog of war: tiles it reveals around it
     BuildingType requires;   // must own a finished one of these first; BUILDING_NONE = nothing
+    const char *description; // shown in the inspector (selected, or hovering its Build button); "" = none
 } BuildingStats;
 
 static const BuildingStats BUILDING_STATS[BUILDING_TYPE_COUNT] = {
-    //                           name             hp       size  cost  buildTime  hotkey  dropOff  sight           requires
-    [BUILDING_BASE]          = { "Base",          1500.0f, 3,    400,  40.0f,     KEY_B,  true,    BUILDING_SIGHT, BUILDING_NONE     },
-    [BUILDING_BARRACKS]      = { "Barracks",       900.0f, 2,    150,  25.0f,     KEY_K,  false,   BUILDING_SIGHT, BUILDING_NONE     },
-    [BUILDING_ARCHERY_RANGE] = { "Archery Range",  800.0f, 2,    175,  25.0f,     KEY_R,  false,   BUILDING_SIGHT, BUILDING_NONE     },
-    [BUILDING_ACADEMY]       = { "Academy",       1000.0f, 2,    450,  35.0f,     KEY_E,  false,   BUILDING_SIGHT, BUILDING_BARRACKS },
+    //                           name             hp       size  cost  buildTime  hotkey  dropOff  sight           requires           description
+    [BUILDING_BASE]          = { "Base",          1500.0f, 3,    400,  40.0f,     KEY_B,  true,    BUILDING_SIGHT, BUILDING_NONE,     "Trains Workers and takes in the gold they mine." },
+    [BUILDING_BARRACKS]      = { "Barracks",       900.0f, 2,    150,  25.0f,     KEY_K,  false,   BUILDING_SIGHT, BUILDING_NONE,     "Trains Melee soldiers and Knights, the front line of your army." },
+    [BUILDING_ARCHERY_RANGE] = { "Archery Range",  800.0f, 2,    175,  25.0f,     KEY_R,  false,   BUILDING_SIGHT, BUILDING_NONE,     "Trains Archers and Scouts, who fight and scout from a distance." },
+    [BUILDING_ACADEMY]       = { "Academy",       1000.0f, 2,    450,  35.0f,     KEY_E,  false,   BUILDING_SIGHT, BUILDING_BARRACKS, "Trains Medics and Mages, once you own a finished Barracks." },
 };
 
 // --- Damage and armor ---------------------------------------------------------------
@@ -80,7 +82,8 @@ static const float DAMAGE_VS_ARMOR[DAMAGE_TYPE_COUNT][ARMOR_TYPE_COUNT] = {
 // in UNIT_STATS, and (optionally) art in assets/sprites/units or a look in
 // UnitsDrawIcon(). `trainedAt` puts a Train button on that building;
 // BUILDING_NONE means it can't be trained. Columns a unit doesn't use stay 0
-// (healing, splash, minRange): 0 means "off".
+// (healing, splash, minRange): 0 means "off". `description` is what the
+// inspector shows for it ("" = no box).
 typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UNIT_MAGE, UNIT_SCOUT, UNIT_TYPE_COUNT } UnitType;
 
 typedef struct UnitStats {
@@ -104,17 +107,18 @@ typedef struct UnitStats {
     float splashRadius;   // > 0: fires a bolt that hits EVERY unit and building this close to where it lands (friends too)
     float splashFalloff;  // damage at the edge of the splash, as a fraction of the centre's (1 = same everywhere)
     float minRange;       // won't fire at targets closer than this; backs off or picks another (0 = none)
+    const char *description;   // shown in the inspector (selected, or hovering its Train button); "" = none
 } UnitStats;
 
 static const UnitStats UNIT_STATS[UNIT_TYPE_COUNT] = {
-    //                 name      trainedAt               hotkey  hp      damage  damageType     range   cooldown  speed  armor  armorType     cost  trainTime  sight       canHeal  healRate  healRange  splash  falloff  minRange
-    [UNIT_MELEE]  = { "Melee",  BUILDING_BARRACKS,      KEY_M,  120.0f, 12.0f,  DAMAGE_BLUNT,   16.0f, 0.8f,     75.0f, 1.0f,  ARMOR_MEDIUM, 75,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f  },
-    [UNIT_ARCHER] = { "Archer", BUILDING_ARCHERY_RANGE, KEY_C,   70.0f,  9.0f,  DAMAGE_PIERCE, 120.0f, 1.2f,     65.0f, 0.0f,  ARMOR_LIGHT,  100,  7.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f  },
-    [UNIT_WORKER] = { "Worker", BUILDING_BASE,          KEY_W,   40.0f,  4.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  50,   5.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f  },
-    [UNIT_KNIGHT] = { "Knight", BUILDING_BARRACKS,      KEY_N,  300.0f, 18.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     55.0f, 2.0f,  ARMOR_HEAVY,  175,  10.0f,     UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f  },
-    [UNIT_MEDIC]  = { "Medic",  BUILDING_ACADEMY,       KEY_D,   60.0f,  0.0f,  DAMAGE_PIERCE,   0.0f, 0.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  125,  8.0f,      UNIT_SIGHT, true,    8.0f,     64.0f,     0.0f,   0.0f,    0.0f  },
-    [UNIT_MAGE]   = { "Mage",   BUILDING_ACADEMY,       KEY_G,   50.0f, 30.0f,  DAMAGE_MAGIC,  200.0f, 2.5f,     50.0f, 0.0f,  ARMOR_LIGHT,  200,  12.0f,     UNIT_SIGHT, false,   0.0f,     0.0f,      48.0f,  0.3f,    72.0f },
-    [UNIT_SCOUT]  = { "Scout",  BUILDING_ARCHERY_RANGE, KEY_O,   35.0f,  4.0f,  DAMAGE_PIERCE, 100.0f, 1.0f,    110.0f, 0.0f,  ARMOR_LIGHT,  60,   5.0f,      11,         false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f  },
+    //                 name      trainedAt               hotkey  hp      damage  damageType     range   cooldown  speed  armor  armorType     cost  trainTime  sight       canHeal  healRate  healRange  splash  falloff  minRange  description
+    [UNIT_MELEE]  = { "Melee",  BUILDING_BARRACKS,      KEY_M,  120.0f, 12.0f,  DAMAGE_BLUNT,   16.0f, 0.8f,     75.0f, 1.0f,  ARMOR_MEDIUM, 75,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f, "A cheap, sturdy foot soldier whose mace crushes heavy armor." },
+    [UNIT_ARCHER] = { "Archer", BUILDING_ARCHERY_RANGE, KEY_C,   70.0f,  9.0f,  DAMAGE_PIERCE, 120.0f, 1.2f,     65.0f, 0.0f,  ARMOR_LIGHT,  100,  7.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f, "Shoots from a distance, deadly against light armor but weak against plate." },
+    [UNIT_WORKER] = { "Worker", BUILDING_BASE,          KEY_W,   40.0f,  4.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  50,   5.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f, "Mines gold and constructs buildings, but barely fights." },
+    [UNIT_KNIGHT] = { "Knight", BUILDING_BARRACKS,      KEY_N,  300.0f, 18.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     55.0f, 2.0f,  ARMOR_HEAVY,  175,  10.0f,     UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f, "A slow, heavily armored soldier that hits hard and shrugs off arrows." },
+    [UNIT_MEDIC]  = { "Medic",  BUILDING_ACADEMY,       KEY_D,   60.0f,  0.0f,  DAMAGE_PIERCE,   0.0f, 0.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  125,  8.0f,      UNIT_SIGHT, true,    8.0f,     64.0f,     0.0f,   0.0f,    0.0f, "Heals wounded allies nearby instead of attacking." },
+    [UNIT_MAGE]   = { "Mage",   BUILDING_ACADEMY,       KEY_G,   50.0f, 30.0f,  DAMAGE_MAGIC,  200.0f, 2.5f,     50.0f, 0.0f,  ARMOR_LIGHT,  200,  12.0f,     UNIT_SIGHT, false,   0.0f,     0.0f,      48.0f,  0.3f,    72.0f, "Hurls magic bolts that hit everything where they land, friends too, but can't fire at close range." },
+    [UNIT_SCOUT]  = { "Scout",  BUILDING_ARCHERY_RANGE, KEY_O,   35.0f,  4.0f,  DAMAGE_PIERCE, 100.0f, 1.0f,    110.0f, 0.0f,  ARMOR_LIGHT,  60,   5.0f,      11,         false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f, "A fast, far-sighted rider for finding the enemy, fragile in a fight." },
 };
 
 // Auto-targeting leash: an idle unit that starts chasing an enemy on its own

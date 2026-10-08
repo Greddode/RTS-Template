@@ -36,16 +36,19 @@ target_compile_options(game PRIVATE -Wall -Wextra)
 set_target_properties(game PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_link_libraries(game PRIVATE raylib m)
 
-# Map files (maps/*.map) and sprite art (assets/sprites/*/*.png) ship with the game.
-# The PNGs are listed so that adding or changing art re-bundles the web build.
+# Map files (maps/*.map), sprite art (assets/sprites/*/*.png) and the UI font
+# (assets/fonts) ship with the game. The asset files are listed so that adding
+# or changing one re-bundles the web build.
 # The folder is (re)created if missing, so deleting all art never breaks the build.
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/assets/sprites)
+file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/assets/fonts)   # no font file = raylib's default font
 file(GLOB_RECURSE SPRITE_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/assets/sprites/*)
+file(GLOB_RECURSE FONT_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/assets/fonts/*)
 if (EMSCRIPTEN)
     # Emit index.html + index.js / .wasm / .data: itch.io (and most hosts) open index.html.
     set_target_properties(game PROPERTIES OUTPUT_NAME index SUFFIX ".html")
     set_property(TARGET game APPEND PROPERTY LINK_DEPENDS ${CMAKE_SOURCE_DIR}/src/editor/web_download.js
-                 ${CMAKE_SOURCE_DIR}/web/shell.html ${SPRITE_FILES})   # relink when they change
+                 ${CMAKE_SOURCE_DIR}/web/shell.html ${SPRITE_FILES} ${FONT_FILES})   # relink when they change
     target_link_options(game PRIVATE
         -sUSE_GLFW=3              # raylib's window/input layer, provided by Emscripten
         -sALLOW_MEMORY_GROWTH=1   # let the heap grow (lots of units later)
@@ -53,6 +56,7 @@ if (EMSCRIPTEN)
         # keeps each flag with its folder: CMake drops repeated options otherwise.
         "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/maps@/maps"
         "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/sprites@/assets/sprites"
+        "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/fonts@/assets/fonts"
         --js-library ${CMAKE_SOURCE_DIR}/src/editor/web_download.js   # the editor's Save -> browser download
         "SHELL:--shell-file ${CMAKE_SOURCE_DIR}/web/shell.html"     # our page instead of Emscripten's default one
     )
@@ -65,9 +69,13 @@ else()
     add_custom_target(copy_sprites ALL
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets/sprites ${CMAKE_BINARY_DIR}/assets/sprites)
     add_dependencies(game copy_sprites)
+    add_custom_target(copy_fonts ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets/fonts ${CMAKE_BINARY_DIR}/assets/fonts)
+    add_dependencies(game copy_fonts)
     # Builds made from source read and save maps in the project's maps/ folder
     # (so the editor's saves are kept and seen by git). A shipped game, without
     # this folder, uses the copy next to the executable.
     target_compile_definitions(game PRIVATE MAPS_SOURCE_DIR="${CMAKE_SOURCE_DIR}/maps"
-                                            SPRITES_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/sprites")   # same idea for art
+                                            SPRITES_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/sprites"    # same idea for art
+                                            FONTS_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets/fonts")       # and the font
 endif()

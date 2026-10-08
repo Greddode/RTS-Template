@@ -114,7 +114,7 @@ void OverlayDrawFpsLine(void)
     if (!visible) return;
     const char *text = TextFormat("%d FPS  %.1f ms", GetFPS(), GetFrameTime()*1000.0f);
     float size = Ui(TEXT_SIZE);
-    float w = (float)MeasureText(text, (int)size) + Ui(12.0f), h = size + Ui(8.0f);
+    float w = UiTextWidth(text, size) + Ui(12.0f), h = size + Ui(8.0f);
     // Top right, under where the gold counter sits (pause / game over): clear of the
     // menus, the editor's panel (left) and its tile readout (bottom right).
     float x = GetScreenWidth() - w - Ui(6.0f), y = Ui(40.0f);

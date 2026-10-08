@@ -8,11 +8,14 @@
 // Tools (left panel, generated from the tables where possible):
 //   tile brushes   one per TILE_INFO entry, brush size 1 / 3 / 5
 //   buildings      one per BUILDING_STATS entry, for the chosen team
-//   units          one per UNIT_STATS entry, for the chosen team
+//   units          one per UNIT_STATS entry, for the chosen team; the brush
+//                  size places an NxN block, one unit per tile (click or drag)
 //   gold           with an amount field
 //   erase          removes the object under the cursor
 // Objects can only go where a map file allows them (MapDocObjectFits), and
-// painting water/rock skips tiles under objects, so the map stays valid.
+// painting water/rock skips tiles under objects, so the map stays valid. The
+// unit brush skips tiles that don't allow a unit (water, rock, taken), and its
+// ghost shows every tile: green = a unit goes there, red = skipped.
 //
 // Save writes the normal text format, then reads the file back with the
 // normal loader (MapFileParse) and shows its error if anything is wrong.
@@ -46,6 +49,7 @@
 #define ROW_H          30.0f
 #define GAP            6.0f
 #define PAD            10.0f
+#define VIEW_MARGIN    8.0f     // fully zoomed out: gap around the map
 #define MESSAGE_LONG   8.0
 #define DEFAULT_GOLD   "1500"
 #define GRID_COLOR     (Color){ 0, 0, 0, 40 }
@@ -59,7 +63,8 @@ static MapDoc   checkDoc;         // scratch: reading files back to check / load
 static ToolKind tool = TOOL_TILE;
 static int      toolType = TILE_WATER;
 static int      team = PLAYER_TEAM;
-static int      brushIndex = 0;   // 0, 1, 2 -> size 1, 3, 5
+static int      brushIndex = 0;   // 0, 1, 2 -> size 1, 3, 5 (tiles and units)
+static bool     strokeStopped;    // unit brush hit the limit: place nothing more until the mouse is released
 static char     goldText[8] = DEFAULT_GOLD;
 static char     nameText[MAP_NAME_LEN] = "My map";
 static bool     tilesDirty = true;
@@ -117,11 +122,22 @@ static MapObject ToolObject(int x, int y)
 static void ResetEditing(void)
 {
     undoCount = 0;
-    tilesDirty = true;
     loading = false;
     panelScroll = 0.0f;
     snprintf(nameText, sizeof(nameText), "%s", doc.name);
+    MapSetTiles(doc.width, doc.height, doc.tiles);   // now, so the camera below centres on THIS map's size
+    tilesDirty = false;
     CamInit();
+}
+
+// The screen area beside the tool panel, where the map is shown.
+static Rectangle WorldView(void)
+{
+    float left = Ui(PAD) + Ui(PANEL_W) + Ui(PAD);
+    float margin = Ui(VIEW_MARGIN);
+    Rectangle view = { left + margin, margin, GetScreenWidth() - left - margin*2.0f, GetScreenHeight() - margin*2.0f };
+    if (view.width < Ui(40.0f)) view = (Rectangle){ 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() };   // window narrower than the panel
+    return view;
 }
 
 // --- Opening -------------------------------------------------------------------------
@@ -211,11 +227,69 @@ static void PaintTiles(int cx, int cy)
     tilesDirty = true;
 }
 
+// --- Unit brush ----------------------------------------------------------------------
+
+#define BRUSH_MAX_TILES 25   // 5x5
+
+typedef struct BrushTile { MapObject unit; bool fits; } BrushTile;
+
+// The tiles of an NxN unit brush centred on cx,cy (row by row, top-left
+// first), each with "a unit fits here" by the map file rules. Tiles outside
+// the map aren't listed. Returns how many.
+static int BrushTiles(int cx, int cy, BrushTile *out)
+{
+    int half = BRUSH_SIZES[brushIndex]/2, n = 0;
+    for (int y = cy - half; y <= cy + half; y++)
+    {
+        for (int x = cx - half; x <= cx + half; x++)
+        {
+            if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) continue;
+            out[n].unit = (MapObject){ .kind = MAPOBJ_UNIT, .type = toolType, .team = team, .x = x, .y = y };
+            out[n].fits = MapDocObjectFits(&doc, &out[n].unit, -1);   // open ground, nothing on the tile yet
+            n++;
+        }
+    }
+    return n;
+}
+
+static int DocUnitCount(void)
+{
+    int n = 0;
+    for (int i = 0; i < doc.objectCount; i++) n += (doc.objects[i].kind == MAPOBJ_UNIT);
+    return n;
+}
+
+// Place the brush's units. Called every frame while the button is held: a
+// tile that got a unit no longer fits, so a drag never puts two on one tile.
+static void PaintUnits(int cx, int cy, bool firstFrame)
+{
+    if (strokeStopped) return;
+    static BrushTile tiles[BRUSH_MAX_TILES];
+    int count = BrushTiles(cx, cy, tiles), placed = 0, unitCount = DocUnitCount();
+    for (int i = 0; i < count; i++)
+    {
+        if (!tiles[i].fits) continue;
+        if (doc.objectCount >= MAP_MAX_OBJECTS || unitCount >= MAX_UNITS)
+        {
+            UiShowMessageFor((doc.objectCount >= MAP_MAX_OBJECTS)
+                ? TextFormat("Limit reached: a map holds at most %d objects (units, buildings and gold)", MAP_MAX_OBJECTS)
+                : TextFormat("Limit reached: a map holds at most %d units", MAX_UNITS), MESSAGE_LONG);
+            strokeStopped = true;   // stop this stroke; release the mouse to try again
+            return;
+        }
+        doc.objects[doc.objectCount++] = tiles[i].unit;
+        unitCount++;
+        placed++;
+    }
+    if (firstFrame && placed == 0 && count > 0) UiShowMessage("Doesn't fit there");
+}
+
 static void WorldInput(void)
 {
     if (UiWantsMouse() || loading) return;
     int x, y;
     MouseTile(&x, &y);
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) strokeStopped = false;   // a new stroke
 
     if (tool == TOOL_TILE)
     {
@@ -226,6 +300,10 @@ static void WorldInput(void)
     {
         int i = ObjectAt(x, y);
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && i != -1) RemoveObject(i);
+    }
+    else if (tool == TOOL_UNIT)
+    {
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) PaintUnits(x, y, IsMouseButtonPressed(MOUSE_BUTTON_LEFT));
     }
     else if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
     {
@@ -361,6 +439,18 @@ static void DrawCursor(void)
         Rectangle r = { (float)(x - half)*TILE_SIZE, (float)(y - half)*TILE_SIZE, (float)BRUSH_SIZES[brushIndex]*TILE_SIZE, (float)BRUSH_SIZES[brushIndex]*TILE_SIZE };
         DrawRectangleLinesEx(r, line, RAYWHITE);
     }
+    else if (tool == TOOL_UNIT)   // one ghost per brush tile: green = placed, red = skipped
+    {
+        static BrushTile tiles[BRUSH_MAX_TILES];
+        int count = BrushTiles(x, y, tiles);
+        for (int i = 0; i < count; i++)
+        {
+            Color c = tiles[i].fits ? GHOST_OK : GHOST_BLOCKED;
+            Rectangle r = { (float)tiles[i].unit.x*TILE_SIZE, (float)tiles[i].unit.y*TILE_SIZE, (float)TILE_SIZE, (float)TILE_SIZE };
+            DrawRectangleRec(r, Fade(c, 0.35f));
+            DrawRectangleLinesEx(r, line, c);
+        }
+    }
     else if (tool == TOOL_ERASE)
     {
         int i = ObjectAt(x, y);
@@ -451,7 +541,7 @@ static EditorAction DrawPanel(void)
         DrawRectangleRec((Rectangle){ r.x + Ui(6.0f), r.y + Ui(7.0f), Ui(16.0f), Ui(16.0f) }, TILE_INFO[t].color);   // colour swatch
     }
     static const char *brushLabels[3] = { "1", "3", "5" };
-    UiLabel("Brush size", x, y, Ui(15.0f), LIGHTGRAY);
+    UiLabel("Brush size (tiles and units)", x, y, Ui(15.0f), LIGHTGRAY);
     y += Ui(18.0f);
     UiTabs(Row(x, &y, w), brushLabels, 3, &brushIndex);
 
@@ -479,14 +569,16 @@ static EditorAction DrawPanel(void)
 
 EditorAction EditorFrame(void)
 {
-    // Camera: the game's normal pan and zoom (it ignores the mouse over UI).
-    CamUpdate(GetFrameTime());
+    if (tilesDirty) { MapSetTiles(doc.width, doc.height, doc.tiles); tilesDirty = false; }   // first: the camera needs the map's size
+
+    // Camera: pan and zoom like the game (it ignores the mouse over UI), but
+    // zooming out stops where the whole map fits beside the panel.
+    CamUpdateEditor(GetFrameTime(), WorldView());
 
     bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
     if (!UiWantsKeyboard() && ctrl && IsKeyPressed(KEY_UNDO)) PopUndo();
     WorldInput();
-
-    if (tilesDirty) { MapSetTiles(doc.width, doc.height, doc.tiles); tilesDirty = false; }
+    if (tilesDirty) { MapSetTiles(doc.width, doc.height, doc.tiles); tilesDirty = false; }   // painted this frame
 
     ClearBackground(BLACK);
     BeginMode2D(gameCamera);

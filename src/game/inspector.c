@@ -9,6 +9,11 @@
 //   a gold node     gold left
 // Selected workers also get a Build section.
 //
+// Description box: just above the panel, the `description` from UNIT_STATS /
+// BUILDING_STATS of the selected unit or building - or, while the mouse is
+// over a Train or Build button, of that type. Word-wrapped, scrolls with the
+// wheel if it's long. An empty description shows no box.
+//
 // The Train and Build buttons are generated from UNIT_STATS (trainedAt,
 // hotkey) and BUILDING_STATS (cost, hotkey), so a new unit or building type
 // gets its button by adding a table row - no UI code.
@@ -26,6 +31,7 @@
 #include "minimap.h"
 #include "ui.h"
 #include "units.h"
+#include <stddef.h>
 
 #define PANEL_W      760.0f   // reference sizes (720 px tall window), scaled by Ui()
 #define PANEL_H      150.0f
@@ -39,9 +45,15 @@
 #define BAR_H        12.0f
 #define BUTTON_GAP   8.0f
 #define SCROLLBAR    10.0f    // room kept for the scrollbar on the right
+#define DESC_W       420.0f   // description box
+#define DESC_MAX_H   68.0f    // three lines of text; more scrolls
+#define DESC_GAP     6.0f     // between it and the panel
 
 static float buttonScroll = 0.0f;          // scroll position of the button list
 static unsigned int scrollOwner = 0;       // what it belongs to: reset when the selection changes
+static const char *hoverDescription;       // description of the Train/Build button under the mouse (this frame)
+static float descScroll = 0.0f;
+static const char *descShown;              // the text descScroll belongs to
 
 // Bottom of the screen, centred in the space right of the minimap.
 static Rectangle Panel(void)
@@ -177,7 +189,7 @@ static void DrawManyUnits(Rectangle panel, const int *ids, int count)
         const char *label = TextFormat("%s x%d", UNIT_STATS[t].name, perType[t]);
         UnitsDrawIcon((UnitType)t, PLAYER_TEAM, (Vector2){ cx + Ui(ICON), y + Ui(ICON) }, Ui(ICON));
         UiLabel(label, cx + Ui(ICON*2.0f + 6.0f), y + Ui(2.0f), Ui(SMALL), RAYWHITE);
-        cx += Ui(ICON*2.0f + 18.0f) + MeasureText(label, (int)Ui(SMALL));   // next entry after this text
+        cx += Ui(ICON*2.0f + 18.0f) + UiTextWidth(label, Ui(SMALL));   // next entry after this text
     }
     y += Ui(34.0f);
     Bar(x, y, Ui(200.0f), hp/maxHp, HealthColor(hp/maxHp));
@@ -208,7 +220,9 @@ static void DrawBuildButtons(Rectangle panel)
         const char *label = InputIsPlacing((BuildingType)t) ? TextFormat("Placing %s...", s->name)
                           : unlocked ? TextFormat("%s  %dg  [%s]", s->name, s->cost, UiKeyName(s->hotkey))
                                      : TextFormat("%s - Requires %s", s->name, BUILDING_STATS[s->requires].name);
-        if (UiButtonEx(ButtonSlot(area, k++, offset), label, s->hotkey, !affordable || !unlocked))
+        Rectangle slot = ButtonSlot(area, k++, offset);
+        if (UiHover(slot)) hoverDescription = s->description;
+        if (UiButtonEx(slot, label, s->hotkey, !affordable || !unlocked))
         {
             if (InputIsPlacing((BuildingType)t)) InputTogglePlacement((BuildingType)t);   // cancel
             else if (!unlocked) UiShowMessage(TextFormat("Requires %s", BUILDING_STATS[s->requires].name));
@@ -228,7 +242,7 @@ static void DrawBuilding(Rectangle panel, int id)
 
     UiLabel(s->name, x, y, Ui(22.0f), RAYWHITE);
     if (s->requires != BUILDING_NONE)   // its prerequisite, from the table
-        UiLabel(TextFormat("needs: %s", BUILDING_STATS[s->requires].name), x + MeasureText(s->name, (int)Ui(22.0f)) + Ui(14.0f), y + Ui(5.0f), Ui(SMALL), LIGHTGRAY);
+        UiLabel(TextFormat("needs: %s", BUILDING_STATS[s->requires].name), x + UiTextWidth(s->name, Ui(22.0f)) + Ui(14.0f), y + Ui(5.0f), Ui(SMALL), LIGHTGRAY);
     y += Ui(32.0f);
     Bar(x, y, Ui(200.0f), b->hp/s->hp, HealthColor(b->hp/s->hp));
     UiLabel(TextFormat("%d / %d", (int)b->hp, (int)s->hp), x + Ui(210.0f), y - Ui(2.0f), Ui(SMALL), RAYWHITE);
@@ -272,7 +286,9 @@ static void DrawBuilding(Rectangle panel, int id)
         if (u->trainedAt != b->type) continue;
         bool affordable = EconomyGold(b->team) >= u->cost;
         const char *label = TextFormat("%s  %dg  [%s]", u->name, u->cost, UiKeyName(u->hotkey));
-        if (UiButtonEx(ButtonSlot(area, k++, offset), label, u->hotkey, !affordable))
+        Rectangle slot = ButtonSlot(area, k++, offset);
+        if (UiHover(slot)) hoverDescription = u->description;
+        if (UiButtonEx(slot, label, u->hotkey, !affordable))
         {
             if (b->queueCount >= MAX_QUEUE) UiShowMessage("Queue full");
             else if (!BuildingQueueTrain(id, (UnitType)t)) UiShowMessage("Not enough gold");
@@ -292,6 +308,18 @@ static void DrawNode(Rectangle panel, int id)
     UiLabel(TextFormat("%d gold left", goldNodes[id].amount), x + Ui(210.0f), y - Ui(2.0f), Ui(SMALL), RAYWHITE);
 }
 
+// The description box above the panel; nothing for "" (or NULL).
+static void DrawDescription(Rectangle panel, const char *text)
+{
+    if (text == NULL || text[0] == '\0') return;
+    if (text != descShown) { descShown = text; descScroll = 0.0f; }   // another text: back to its top
+    float w = Ui(DESC_W);
+    if (w > panel.width) w = panel.width;
+    float h = UiTextBoxHeight(text, w, Ui(SMALL), Ui(DESC_MAX_H));
+    Rectangle box = { panel.x, panel.y - Ui(DESC_GAP) - h, w, h };
+    UiTextBox(box, text, Ui(SMALL), RAYWHITE, &descScroll);
+}
+
 void InspectorDraw(void)
 {
     if (!InputHasSelection()) return;   // nothing selected: no work at all
@@ -305,17 +333,20 @@ void InspectorDraw(void)
     Rectangle panel = Panel();
     UiPanel(panel);
 
-    if (building != -1) DrawBuilding(panel, building);
+    hoverDescription = NULL;   // set by the button lists below
+    const char *description = NULL;
+    if (building != -1) { DrawBuilding(panel, building); description = BUILDING_STATS[buildings[building].type].description; }
     else if (node != -1) DrawNode(panel, node);
     else
     {
-        if (unitCount == 1) DrawOneUnit(panel, &units[ids[0]]);
+        if (unitCount == 1) { DrawOneUnit(panel, &units[ids[0]]); description = UNIT_STATS[units[ids[0]].type].description; }
         else DrawManyUnits(panel, ids, unitCount);
 
         bool anyWorker = false;
         for (int k = 0; k < unitCount && !anyWorker; k++) anyWorker = (units[ids[k]].type == UNIT_WORKER);
         if (anyWorker) DrawBuildButtons(panel);
     }
+    DrawDescription(panel, hoverDescription ? hoverDescription : description);
 }
 
 // Collect every hotkey in use and warn about duplicates. Run once at startup,

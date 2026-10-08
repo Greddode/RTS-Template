@@ -11,8 +11,17 @@
 // input code runs before the UI is drawn, so UiWantsMouse() checks the mouse
 // against the rectangles recorded on the PREVIOUS frame. One frame late is
 // fine: the UI doesn't move.
+//
+// Text: every string in the game is drawn by UiLabel() and measured by
+// UiTextWidth(), in one font (UI_FONT_FILE in assets/fonts). Nothing else
+// calls raylib's DrawText / MeasureText, so swapping the font is one line.
+// A font file is turned into a texture of pre-drawn letters at ONE pixel
+// size; drawing much bigger or smaller than that looks blurry. So the font
+// is loaded at sizes that follow the UI scale and reloaded when the window
+// height changes. If the file is missing, raylib's built-in font is used.
 
 #include "ui.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -32,6 +41,12 @@
 #define SCROLLBAR_W      5.0f
 #define SCROLLBAR_COLOR  (Color){ 130, 135, 145, 255 }
 
+#define UI_FONT_FILE     "Inter-Regular.ttf"   // in assets/fonts; any .ttf / .otf works
+#define UI_FONT_SIZE     20.0f   // reference sizes it's loaded at (scaled like the UI): most text is 15-22,
+#define UI_FONT_TITLE    34.0f   // titles 24-36
+#define UI_LINE_SPACING  1.25f   // wrapped text: line height = text size * this
+#define TEXT_BOX_PAD     6.0f
+
 static Rectangle rects[2][MAX_UI_RECTS];   // [0] this frame, [1] last frame
 static int       rectCount[2];
 
@@ -45,11 +60,103 @@ static bool Hover(Rectangle r)
     return CheckCollisionPointRec(m, r) && (!clipping || CheckCollisionPointRec(m, clipRect));
 }
 
+bool UiHover(Rectangle r)
+{
+    return Hover(r);
+}
+
+// --- Font --------------------------------------------------------------------------
+// Loaded twice: at the size of normal text and at title size. Each piece of
+// text uses the copy nearest its size, so letters are never stretched far.
+
+static const float FONT_SIZES[2] = { UI_FONT_SIZE, UI_FONT_TITLE };
+static Font font[2];
+static bool fontFromFile = false;   // false: raylib's default font
+static int  fontPixels = 0;         // pixel size of font[0] (0 = nothing loaded); font[1] follows it
+
+static void FontPath(char *out, int size)
+{
+#if defined(__EMSCRIPTEN__)
+    snprintf(out, size, "/assets/fonts/%s", UI_FONT_FILE);
+#else
+  #if defined(FONTS_SOURCE_DIR)
+    if (DirectoryExists(FONTS_SOURCE_DIR)) { snprintf(out, size, "%s/%s", FONTS_SOURCE_DIR, UI_FONT_FILE); return; }
+  #endif
+    snprintf(out, size, "%sassets/fonts/%s", GetApplicationDirectory(), UI_FONT_FILE);
+#endif
+}
+
+static int PixelsFor(float referenceSize)
+{
+    int pixels = (int)lroundf(Ui(referenceSize));
+    return (pixels < 8) ? 8 : pixels;
+}
+
+void UiFontUnload(void)
+{
+    if (fontFromFile) { UnloadFont(font[0]); UnloadFont(font[1]); }
+    fontFromFile = false;
+    fontPixels = 0;
+}
+
+void UiFontLoad(void)
+{
+    // Basic Latin (space .. ~) and Latin-1 (no-break space .. ÿ): English plus
+    // the accented letters of most western European languages.
+    static int codepoints[95 + 96];
+    int n = 0;
+    for (int c = 32; c <= 126; c++) codepoints[n++] = c;
+    for (int c = 160; c <= 255; c++) codepoints[n++] = c;
+
+    char path[512];
+    FontPath(path, sizeof(path));
+    UiFontUnload();
+    fontPixels = PixelsFor(FONT_SIZES[0]);
+
+    fontFromFile = FileExists(path);
+    for (int i = 0; i < 2 && fontFromFile; i++)
+    {
+        font[i] = LoadFontEx(path, PixelsFor(FONT_SIZES[i]), codepoints, n);
+        if (font[i].texture.id == 0 || font[i].glyphCount == 0) { fontFromFile = false; if (i == 1) UnloadFont(font[0]); }
+        else SetTextureFilter(font[i].texture, TEXTURE_FILTER_BILINEAR);   // smooth when drawn a little bigger or smaller
+    }
+    if (!fontFromFile)
+    {
+        static bool warned = false;   // one log line, not one per window resize
+        if (!warned) TraceLog(LOG_WARNING, "UI font: %s not found or unreadable, using raylib's default font", path);
+        warned = true;
+        font[0] = font[1] = GetFontDefault();
+    }
+}
+
+// The loaded copy nearest to `size` (switch where the two meet, in proportion).
+static Font FontFor(float size)
+{
+    float split = Ui(sqrtf(FONT_SIZES[0]*FONT_SIZES[1]));
+    return font[(size > split) ? 1 : 0];
+}
+
+// raylib's default font is meant to be drawn with a gap of size/10 between
+// letters; a real font file has its spacing built in.
+static float Spacing(float size)
+{
+    return fontFromFile ? 0.0f : size/10.0f;
+}
+
+float UiTextWidth(const char *text, float size)
+{
+    if (fontPixels == 0) return (float)MeasureText(text, (int)size);   // before UiFontLoad (or after unload)
+    return MeasureTextEx(FontFor(size), text, size, Spacing(size)).x;
+}
+
 void UiBegin(void)
 {
     for (int i = 0; i < rectCount[0]; i++) rects[1][i] = rects[0][i];
     rectCount[1] = rectCount[0];
     rectCount[0] = 0;
+
+    // The window height changed enough to change the font's pixel size: redraw its letters.
+    if (fontPixels != 0 && PixelsFor(UI_FONT_SIZE) != fontPixels) UiFontLoad();
 }
 
 float UiScale(void)
@@ -86,15 +193,122 @@ void UiPanel(Rectangle r)
 
 void UiLabel(const char *text, float x, float y, float size, Color color)
 {
-    DrawText(text, (int)x, (int)y, (int)size, color);
+    if (fontPixels == 0) { DrawText(text, (int)x, (int)y, (int)size, color); return; }   // before UiFontLoad
+    // Whole pixels: letters drawn between pixels come out blurry.
+    DrawTextEx(FontFor(size), text, (Vector2){ roundf(x), roundf(y) }, size, Spacing(size), color);
+}
+
+// The largest size (at most `size`, at least `minSize`) at which `text` fits in `width`.
+float UiFitSize(const char *text, float width, float size, float minSize)
+{
+    while (size > minSize && UiTextWidth(text, size) > width) size -= 1.0f;
+    return (size < minSize) ? minSize : size;
 }
 
 // Shrinks the text if it's wider than the rectangle (long names in buttons).
 static void CenteredText(Rectangle r, const char *text, float size, Color color)
 {
-    while (size > 10.0f && MeasureText(text, (int)size) > r.width - Ui(8.0f)) size -= 1.0f;
-    int w = MeasureText(text, (int)size);
-    DrawText(text, (int)(r.x + (r.width - w)*0.5f), (int)(r.y + (r.height - size)*0.5f), (int)size, color);
+    size = UiFitSize(text, r.width - Ui(8.0f), size, 8.0f);
+    float w = UiTextWidth(text, size);
+    UiLabel(text, r.x + (r.width - w)*0.5f, r.y + (r.height - size)*0.5f, size, color);
+}
+
+// --- Word wrap ---------------------------------------------------------------------
+// Splits `text` into lines no wider than `width` (at spaces; a word longer than
+// a whole line is cut after a '/' or '-' if it has one, else between letters)
+// and draws them, or only measures when `draw` is false. Returns the height
+// used. '\n' starts a new line.
+#define WRAP_LINE_MAX 256
+
+static float WrapText(const char *text, float x, float y, float width, float size, Color color, bool draw)
+{
+    float lineH = size*UI_LINE_SPACING;
+    char line[WRAP_LINE_MAX];
+    int lines = 0;
+    const char *p = text;
+    while (*p != '\0')
+    {
+        // Take words while the line still fits.
+        int len = 0;           // characters of `line` in use
+        const char *next = p;  // where the next line starts
+        while (*next != '\0' && *next != '\n')
+        {
+            const char *wordEnd = next;
+            while (*wordEnd == ' ') wordEnd++;
+            while (*wordEnd != '\0' && *wordEnd != ' ' && *wordEnd != '\n') wordEnd++;
+            int wordLen = (int)(wordEnd - next);
+            if (len == 0 && wordLen >= WRAP_LINE_MAX) { wordLen = WRAP_LINE_MAX - 1; wordEnd = next + wordLen; }   // absurdly long word
+            if (len + wordLen >= WRAP_LINE_MAX) break;
+            memcpy(line + len, next, wordLen);
+            line[len + wordLen] = '\0';
+            if (UiTextWidth(line, size) > width)
+            {
+                if (len > 0) break;   // the line has words: this one goes on the next line
+                // One word wider than the line: as many letters as fit (at least one).
+                int fit = 1;
+                while (fit < wordLen && (next[fit] & 0xC0) == 0x80) fit++;   // never split a UTF-8 letter (é is 2 bytes)
+                while (fit < wordLen)
+                {
+                    int more = fit + 1;
+                    while (more < wordLen && (next[more] & 0xC0) == 0x80) more++;
+                    char keep = line[more];
+                    line[more] = '\0';
+                    bool fits = UiTextWidth(line, size) <= width;
+                    line[more] = keep;
+                    if (!fits) break;
+                    fit = more;
+                }
+                // Nicer: break just after a '/' or '-' inside the part that fits ("attack-|move").
+                for (int k = fit - 1; k > 0; k--)
+                    if (next[k - 1] == '/' || next[k - 1] == '-') { fit = k; break; }
+                wordEnd = next + fit;
+                wordLen = fit;
+            }
+            len += wordLen;
+            next = wordEnd;
+        }
+        line[len] = '\0';
+        if (draw)
+        {
+            const char *shown = line;
+            while (*shown == ' ') shown++;   // a wrapped line doesn't start with the space it broke at
+            UiLabel(shown, x, y + lines*lineH, size, color);
+        }
+        lines++;
+        while (*next == ' ') next++;
+        if (*next == '\n') next++;
+        p = next;
+    }
+    if (lines == 0) return 0.0f;
+    return (lines - 1)*lineH + size;   // the last line needs only its own height
+}
+
+float UiTextWrapped(const char *text, float x, float y, float width, float size, Color color)
+{
+    return WrapText(text, x, y, width, size, color, true);
+}
+
+float UiTextWrappedHeight(const char *text, float width, float size)
+{
+    return WrapText(text, 0.0f, 0.0f, width, size, BLANK, false);
+}
+
+// Height of a UiTextBox `width` wide that shows all of `text`, but at most maxHeight.
+float UiTextBoxHeight(const char *text, float width, float size, float maxHeight)
+{
+    float textW = width - Ui(TEXT_BOX_PAD)*2.0f - Ui(SCROLLBAR_W) - Ui(4.0f);
+    float h = UiTextWrappedHeight(text, textW, size) + Ui(TEXT_BOX_PAD)*2.0f;
+    return (h > maxHeight) ? maxHeight : h;
+}
+
+void UiTextBox(Rectangle r, const char *text, float size, Color color, float *scroll)
+{
+    UiPanel(r);
+    Rectangle area = { r.x + Ui(TEXT_BOX_PAD), r.y + Ui(TEXT_BOX_PAD), r.width - Ui(TEXT_BOX_PAD)*2.0f, r.height - Ui(TEXT_BOX_PAD)*2.0f };
+    float textW = area.width - Ui(SCROLLBAR_W) - Ui(4.0f);   // room for the scrollbar
+    float offset = UiScrollBegin(area, UiTextWrappedHeight(text, textW, size), scroll);
+    UiTextWrapped(text, area.x, area.y + offset, textW, size, color);
+    UiScrollEnd();
 }
 
 bool UiButtonEx(Rectangle r, const char *label, int hotkey, bool dimmed)
@@ -175,9 +389,8 @@ void UiShowMessage(const char *text)
 void UiDrawMessage(void)
 {
     if (GetTime() >= messageUntil) return;
-    float size = Ui(22.0f);
-    while (size > 10.0f && MeasureText(message, (int)size) > GetScreenWidth() - Ui(20.0f)) size -= 1.0f;   // shrink to fit
-    int w = MeasureText(message, (int)size);
+    float size = UiFitSize(message, GetScreenWidth() - Ui(20.0f), Ui(22.0f), 10.0f);   // shrink to fit
+    float w = UiTextWidth(message, size);
     UiLabel(message, (GetScreenWidth() - w)*0.5f, Ui(44.0f), size, ORANGE);
 }
 
@@ -241,7 +454,7 @@ bool UiTextField(Rectangle r, char *text, int capacity, bool digitsOnly)
     DrawRectangleLinesEx(r, 1.0f, focused ? TEXT_COLOR : PANEL_EDGE);
     float size = Ui(18.0f);
     const char *shown = (focused && ((int)(GetTime()*2.0) % 2 == 0)) ? TextFormat("%s_", text) : text;   // blinking cursor
-    DrawText(shown, (int)(r.x + Ui(6.0f)), (int)(r.y + (r.height - size)*0.5f), (int)size, TEXT_COLOR);
+    UiLabel(shown, r.x + Ui(6.0f), r.y + (r.height - size)*0.5f, size, TEXT_COLOR);
     return changed;
 }
 

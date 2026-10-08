@@ -104,6 +104,7 @@ int main(void)
     SetExitKey(KEY_NULL);   // Esc opens the pause menu instead of closing the window
     InspectorCheckHotkeys();   // logs a warning if two hotkeys clash
     SpritesLoad();             // art from assets/sprites (needs the window: textures live on the GPU)
+    UiFontLoad();              // the UI font from assets/fonts (also a texture)
 
 #if defined(__EMSCRIPTEN__)
     // The browser owns the main loop: it calls us once per frame.
@@ -117,6 +118,7 @@ int main(void)
 #endif
 
     SpritesUnload();
+    UiFontUnload();
     CloseWindow();
     return 0;
 }

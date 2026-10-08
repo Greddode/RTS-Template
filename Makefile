@@ -27,9 +27,9 @@ web-zip: web
 # Release: clean builds of both versions, then the web zip and a source zip in dist/.
 VERSION := $(shell sed -n 's/^\#define GAME_VERSION "\(.*\)"/\1/p' src/game/config.h)
 RELEASE  = rts-kit-$(VERSION)
-SOURCE_FILES = README.md LICENSE THIRD_PARTY.md PLAYTEST.md Makefile CMakeLists.txt .gitignore src web assets maps
+SOURCE_FILES = README.md LICENSE THIRD_PARTY.md PLAYTEST.md Makefile CMakeLists.txt .gitignore src web assets maps tests
 release:
-	rm -rf build build-web dist
+	rm -rf build build-web dist tests/build
 	$(MAKE) desktop
 	$(MAKE) web-zip
 	mkdir -p dist/$(RELEASE)
@@ -39,7 +39,15 @@ release:
 	rm -rf dist/$(RELEASE)
 	@echo "Release $(VERSION):"; ls -l dist
 
-clean:
-	rm -rf build build-web dist
+# Automated tests (tests/): build them, then run each; fails if any test fails.
+# They open a hidden window, so they need a display (on a server: xvfb-run make test).
+test:
+	cmake -S tests -B tests/build -DCMAKE_BUILD_TYPE=Release
+	cmake --build tests/build
+	./tests/build/controls_overflow_test
+	./tests/build/controls_overflow_test_longnames
 
-.PHONY: desktop web run serve web-zip release clean
+clean:
+	rm -rf build build-web dist tests/build
+
+.PHONY: desktop web run serve web-zip release test clean

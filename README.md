@@ -8,8 +8,8 @@ made to be read, changed and extended. It runs on **Linux desktop and in the bro
 Knight, Worker, Medic, Mage, Scout) with armor and damage types, splash damage and healers,
 4 production buildings with prerequisites, a computer opponent that builds, expands and attacks,
 fog of war, a minimap, A* pathfinding with a per-frame time budget, a map editor with
-test play, swappable PNG art (placeholders included), a debug overlay (F3), and a web build
-ready to upload to itch.io. Units, buildings, tiles and damage types are rows in tables in
+test play, swappable PNG art (placeholders included), a readable UI font (Inter), a debug
+overlay (F3), and a web build ready to upload to itch.io. Units, buildings, tiles and damage types are rows in tables in
 `config.h`: most new content needs no other code.
 
 Version **1.0.0** (`GAME_VERSION` in `config.h`, shown on the main menu). Licences of the
@@ -55,6 +55,7 @@ make run       # build and run on desktop    (output: build/game)
 make serve     # build for web and serve it   (open http://localhost:8080/index.html)
 make web-zip   # build for web and zip it for itch.io   (output: build-web/rts-kit-web.zip)
 make release   # clean builds of both + the web zip and a source zip in dist/
+make test      # build and run the automated tests (tests/)
 make clean     # delete build folders
 ```
 
@@ -73,6 +74,8 @@ In a game, **Esc** (**Ctrl** in the web build) opens the pause menu and the **Co
 | add an armor or damage type | [Damage and armor](#damage-and-armor) |
 | tune the AI | [Computer opponent (AI)](#computer-opponent-ai): every number is a named constant in `config.h` |
 | change keys | `KEY_...` defines and the `CONTROLS` table in `config.h` |
+| change the font | [Font](#font) |
+| change a unit's or building's description | the `description` column, see [Adding a new unit type](#adding-a-new-unit-type-walkthrough) |
 
 ## Maps
 
@@ -144,7 +147,8 @@ playing (opens the current map; **Exit** or F2 returns to the paused game exactl
 |---|---|
 | Tile brushes (Grass, Dirt, Water, Rock) | Left-click / drag to paint; brush size 1, 3 or 5. Water and rock never paint under an object. **Ctrl+Z** undoes painting (32 steps) |
 | Player / AI | Which team new objects belong to |
-| Base, Barracks, Archery Range, Academy, Melee, Archer, Worker, Knight, Medic, Mage, Scout | Click to place; a green/red ghost shows if it fits (same rules as map files) |
+| Base, Barracks, Archery Range, Academy | Click to place; a green/red ghost shows if it fits (same rules as map files) |
+| Melee, Archer, Worker, Knight, Medic, Mage, Scout | Click or drag to place units. The **brush size** (1, 3, 5) places a 1×1, 3×3 or 5×5 block centred on the cursor, one unit per tile. Tiles that can't take a unit (water, rock, a building, a unit already there) are skipped: the ghost shows every tile, green = a unit goes there, red = skipped. A drag never puts two units on one tile. At the limit (`MAP_MAX_OBJECTS`, 1,024 objects per map) the stroke stops with a message |
 | Gold + amount | Click to place a gold node with that amount |
 | Erase object | Click (or drag over) objects to remove them |
 | New map 32 / 64 / 128 | Start again, all grass |
@@ -152,8 +156,11 @@ playing (opens the current map; **Exit** or F2 returns to the paused game exactl
 | Load | Pick from the same list as the map picker |
 | Test Play | Saves a temporary copy and starts a game on it; Esc → **Back to Editor** (or F2) returns |
 
-The camera pans and zooms as in the game. The tool buttons are generated from `TILE_INFO`,
-`BUILDING_STATS` and `UNIT_STATS`, so new tiles or types appear automatically.
+The camera pans and zooms as in the game, except that you can zoom out until the **whole map**
+fits beside the tool panel, whatever the map and window size (`CamUpdateEditor()` in
+`camera.c`; the game keeps its own limits, 0.5 to 2). Going back to the game (F2 / Exit) restores
+its camera exactly. The tool buttons are generated from `TILE_INFO`, `BUILDING_STATS` and
+`UNIT_STATS`, so new tiles or types appear automatically.
 
 **Where maps are saved:** builds made from this source save into the project's `maps/` folder,
 so new maps show up in git. A shipped game saves next to the executable. **In the browser**,
@@ -286,6 +293,27 @@ needed. A shipped game reads the copy next to the executable. The web build bund
 into the page (rebuild after changing art). For crisp pixel art, set `SPRITES_FILTER` to
 `TEXTURE_FILTER_POINT` in `sprites.h`.
 
+## Font
+
+All text is drawn in **Inter** (`assets/fonts/Inter-Regular.ttf`, SIL Open Font License, see
+[THIRD_PARTY.md](THIRD_PARTY.md)). Every string goes through two functions in `ui.c`:
+`UiLabel()` draws and `UiTextWidth()` measures. Nothing else calls raylib's `DrawText` /
+`MeasureText`, so the font is set in one place. `UiTextWrapped()` word-wraps text to a width
+(used by the description box and the Controls page).
+
+- **Use another font:** put a `.ttf` or `.otf` in `assets/fonts/` and set `UI_FONT_FILE` in
+  `ui.c`. Fonts under the SIL OFL or Apache licence can ship with a commercial game; add its
+  licence to `THIRD_PARTY.md`.
+- **Sizes:** a font file is turned into a texture of letters at one pixel size, and text drawn
+  much bigger or smaller than that looks blurry. So the font is loaded twice, at the normal
+  text size (`UI_FONT_SIZE`, 20) and at title size (`UI_FONT_TITLE`, 34), both scaled with the
+  window height like the rest of the UI, and reloaded when the window is resized. Each piece of
+  text uses the nearer one. Loading takes about 6 ms on the Celeron (13 ms in the browser).
+- **Letters:** Basic Latin plus Latin-1 (English and the accented letters of most western
+  European languages). For other alphabets, add their code points in `UiFontLoad()`.
+- **Missing file:** the game uses raylib's built-in font and logs one `UI font:` warning.
+- The web build bundles `assets/fonts` like the art (rebuild after changing it).
+
 ## Damage and armor
 
 Every unit deals one **damage type** and wears one **armor type**, and has a flat **armor**
@@ -412,14 +440,17 @@ typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UN
 **2. Give it a stats row** in `UNIT_STATS` (same file):
 
 ```c
-//                   name        trainedAt          hotkey  hp      damage  damageType     range  cooldown  speed  armor  armorType     cost  trainTime  sight       canHeal  healRate  healRange  splash  falloff  minRange
-[UNIT_SPEARMAN] = { "Spearman", BUILDING_BARRACKS, KEY_P,  100.0f, 10.0f,  DAMAGE_PIERCE, 20.0f, 0.9f,     70.0f, 1.0f,  ARMOR_MEDIUM, 80,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f },
+//                   name        trainedAt          hotkey  hp      damage  damageType     range  cooldown  speed  armor  armorType     cost  trainTime  sight       canHeal  healRate  healRange  splash  falloff  minRange  description
+[UNIT_SPEARMAN] = { "Spearman", BUILDING_BARRACKS, KEY_P,  100.0f, 10.0f,  DAMAGE_PIERCE, 20.0f, 0.9f,     70.0f, 1.0f,  ARMOR_MEDIUM, 80,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f, "A cheap pikeman who keeps charging Knights at bay." },
 ```
 
 - `name` is used everywhere: inspector, editor button, map files, PNG file name.
 - `trainedAt` puts a Train button on that building (`BUILDING_NONE` = can't be trained).
 - `damageType`, `armor` and `armorType`: see [Damage and armor](#damage-and-armor).
 - `canHeal`, `healRate`, `healRange`: `false, 0, 0` for a fighter (healers: see below).
+- `description`: one sentence the inspector shows above its panel when a Spearman is selected,
+  or when the mouse is over its Train button. Long text is word-wrapped and scrolls; `""` shows
+  no box. Buildings have the same column.
 - `splashRadius`, `splashFalloff`, `minRange`: `0, 0, 0` for a normal attack. Give a unit a
   splash radius and it fires bolts like the Mage, with no other code (see
   [Splash and minimum range](#splash-and-minimum-range-mage)).
@@ -443,7 +474,7 @@ spearman 0 13 55
 Or place one with the map editor, which now has a **Spearman** button.
 
 **What you get without more code:** the Train button and hotkey on the Barracks, its queue icon,
-the inspector's stats (damage, armor), the Controls page entry, the editor button, map-file
+the inspector's stats (damage, armor) and description box, the Controls page entry, the editor button, map-file
 support, fog sight and the minimap dot. A new **building** works the same way: a row in
 `BUILDING_STATS` gives it a Build button for workers, a hotkey, map-file and editor support.
 
@@ -451,16 +482,16 @@ support, fog sight and the minimap dot. A new **building** works the same way: a
 own heal numbers. It then behaves exactly like the Medic (no code):
 
 ```c
-[UNIT_PRIEST] = { "Priest", BUILDING_TEMPLE, KEY_I, 50.0f, 0.0f, DAMAGE_MAGIC, 0.0f, 0.0f, 65.0f, 0.0f, ARMOR_LIGHT, 150, 9.0f, UNIT_SIGHT, true, 12.0f, 80.0f, 0.0f, 0.0f, 0.0f },
+[UNIT_PRIEST] = { "Priest", BUILDING_TEMPLE, KEY_I, 50.0f, 0.0f, DAMAGE_MAGIC, 0.0f, 0.0f, 65.0f, 0.0f, ARMOR_LIGHT, 150, 9.0f, UNIT_SIGHT, true, 12.0f, 80.0f, 0.0f, 0.0f, 0.0f, "Heals allies from further away than a Medic." },
 ```
 
 **Variant: a building that needs another.** A **Temple** that trains the Priest and needs an
-Academy is one enum entry (`BUILDING_TEMPLE`, before `BUILDING_TYPE_COUNT`) plus one row. The last
-column is the prerequisite:
+Academy is one enum entry (`BUILDING_TEMPLE`, before `BUILDING_TYPE_COUNT`) plus one row.
+`requires` is the prerequisite:
 
 ```c
-//                           name       hp       size  cost  buildTime  hotkey  dropOff  sight           requires
-[BUILDING_TEMPLE]        = { "Temple",  900.0f,  2,    300,  30.0f,     KEY_T,  false,   BUILDING_SIGHT, BUILDING_ACADEMY },
+//                           name       hp       size  cost  buildTime  hotkey  dropOff  sight           requires          description
+[BUILDING_TEMPLE]        = { "Temple",  900.0f,  2,    300,  30.0f,     KEY_T,  false,   BUILDING_SIGHT, BUILDING_ACADEMY, "Trains Priests, once you own a finished Academy." },
 ```
 
 Workers get a "Temple - Requires Academy" button until an Academy is finished. The Temple gets
@@ -491,7 +522,7 @@ generated from `CONTROLS` and the key bindings in `config.h`; this table mirrors
 | Arrows / middle-drag | Pan camera |
 | Minimap: left click / drag | Move the camera there |
 | Minimap: right click | Move the selected units there |
-| Mouse wheel | Zoom (over the inspector's buttons: scroll them) |
+| Mouse wheel | Zoom (over the inspector's buttons or the description box: scroll them) |
 | Left click / drag | Select unit / box select |
 | Left click own building | Select it: the inspector shows HP, queue and Train buttons |
 | Left click gold node | Inspect gold left |
@@ -525,7 +556,8 @@ Esc never quits the game directly; use Exit in a menu or close the window. (The 
 
 ## Code layout
 
-`maps/` holds the map files and `assets/sprites/` the art. Source is in `src/`: `main.c` (game states) at the top,
+`maps/` holds the map files, `assets/sprites/` the art and `assets/fonts/` the font. Automated
+tests are in `tests/` (`make test`). Source is in `src/`: `main.c` (game states) at the top,
 `src/game/` for the game and the systems the editor reuses (ui, map, map files, tables),
 and `src/editor/` for the editor.
 
@@ -537,11 +569,11 @@ and `src/editor/` for the editor.
 | `game/config.h` | Shared settings: tick rate, teams, unit and building stats tables, game states, key bindings, controls list |
 | `game/map.c` | Tile map: generated "Random" map, real size of the loaded map, walkability (terrain + building-blocked tiles), culled drawing |
 | `game/mapfile.c` | Map files: `MapDoc` (tiles + objects), parse + full validation with file:line errors, load into the game, write, scan the folder |
-| `editor/editor.c` | Map editor: tile brushes with undo, object tools, save / load / test play |
+| `editor/editor.c` | Map editor: tile brushes with undo, object tools, unit brush (1×1 / 3×3 / 5×5), save / load / test play |
 | `editor/web_download.js` | Web build only: the editor's Save hands the file to the browser as a download |
 | `web/shell.html` | Web build only: the page around the game (canvas scaling, loading bar, no right-click menu, game keys kept from the browser) |
 | `game/sprites.c` | Optional PNG art: scans `assets/sprites`, packs it into one atlas texture (shelf packer), draws units / buildings / tiles from it |
-| `game/camera.c` | Pan / zoom, visible-area queries |
+| `game/camera.c` | Pan / zoom, visible-area queries; the editor's zoom-to-fit (`CamUpdateEditor()`) |
 | `game/units.c` | Unit pool, movement, separation, drawing |
 | `game/grid.c` | Spatial grid for nearby-unit queries |
 | `game/path.c` | A* pathfinding: request queue, per-frame time budget, path smoothing; walkable regions ("can I get there?") |
@@ -553,9 +585,10 @@ and `src/editor/` for the editor.
 | `game/ai.c` | Enemy AI: trains workers to a per-node target, builds a Barracks and an Archery Range, expands to new gold, trains its army, sends idle units at the player |
 | `game/economy.c` | Gold per team, gold node pool, worker mining loop, gold HUD (top right) |
 | `game/buildings.c` | Building pool, tile blocking, placement checks, prerequisites (`BuildingsCanBuild()`), production queue (cancel/refund), rally points, gold drop-off lookup, construction by workers, drawing |
-| `game/ui.c` | Tiny immediate-mode UI (buttons, panels, labels, tabs, scroll areas), scales with window height, blocks clicks from reaching the game |
-| `game/menu.c` | Main menu, map picker, pause menu, Controls page, Victory / Defeat screen |
-| `game/inspector.c` | Bottom panel for the selection; Train / Build buttons generated from the stats tables; hotkey clash check |
+| `game/ui.c` | Tiny immediate-mode UI (buttons, panels, labels, tabs, scroll areas, word-wrapped text boxes), scales with window height, blocks clicks from reaching the game; the UI font: all text is drawn and measured here |
+| `game/menu.c` | Main menu, map picker, pause menu, Controls page (measured: shrinks / wraps to its columns, scrolls), Victory / Defeat screen |
+| `game/inspector.c` | Bottom panel for the selection; Train / Build buttons generated from the stats tables; description box; hotkey clash check |
+| `tests/controls_overflow_test.c` | Automated test: draws the Controls page at 6 window sizes (and with very long names) and fails if any text leaves its column (see the file) |
 
 ## Performance
 
@@ -567,13 +600,17 @@ and 30 Scouts; 732 units in all).
 | | Desktop (60 FPS cap) | Desktop (uncapped) | Web (Firefox) |
 |---|---|---|---|
 | FPS, 100 workers + 300 vs 300 | 60 (min 60) | 390 avg (min 355) | 59 (min 59) |
+| Same, with the Inter font (camera zoomed out over the base and the battle, Base selected) | 60 (min 59.6) | 351–406 avg (3 runs; 1.0.0 in the same runs: 381–433) | |
+| Map editor, whole 128×128 map on screen | | 124 avg | |
 | FPS, full unit pool (2,046 units) | 59 (min 58) | 293 avg (min 259) | not measured |
 | Sim tick (30 per second), battle | 1.1–1.7 ms avg, 4.8 ms worst | | |
 | Sim tick, 2,046 units | 5–8 ms avg, 20 ms worst | | |
 | Fog of war update (5 per second) | 0.14–0.23 ms avg, 0.38 ms worst (battle); 0.70 ms worst (2,046 units) | | |
 | Peak memory | 51 MB | | |
 | Startup: packing the art atlas | 2–4 ms | | 10–40 ms |
-| Download size | | | 207 KB zip (wasm 405 KB, js 180 KB, maps + art 36 KB) |
+| Startup: loading the font (two sizes) | 6 ms | | 13–15 ms |
+| Startup: first frame | ~190 ms from `main()` (1.0.0: the same) | | ~360 ms after the page opens, served locally (1.0.0: ~340 ms) |
+| Download size | | | 428 KB zip (the font is 411 KB of it; 1.0.0: 207 KB) |
 
 Limits are fixed pools, set in headers: 2,048 units (`MAX_UNITS`), 64 buildings
 (`MAX_BUILDINGS`), 64 gold nodes, 1,024 projectiles, maps up to 128×128 tiles. Other apps
@@ -598,6 +635,7 @@ running on the same machine lower the uncapped numbers a lot. Press F3 to see th
 - **The web build draws at 1280×720** and scales that to the browser window (slightly soft on big
   screens). The editor's **Load** is off in the browser (Save downloads the file).
 - Maps and art are read at startup; changing them needs a restart (the web build needs a rebuild).
+- **Text is Latin-1 only** (English and western European accents), see [Font](#font).
 
 ### Balance (measured)
 
@@ -635,9 +673,9 @@ puts two zips in `dist/`:
   level, ready to upload to itch.io (HTML project, "This file will be played in the browser",
   viewport 1280 × 720).
 - `rts-kit-<version>-source.zip`: the source, `README.md`, `LICENSE`, `THIRD_PARTY.md`,
-  `PLAYTEST.md`, `assets/` and `maps/`, in one `rts-kit-<version>/` folder.
+  `PLAYTEST.md`, `assets/`, `maps/` and `tests/`, in one `rts-kit-<version>/` folder.
 
 For 1.0.0: web zip 207 KB, source zip 149 KB; about 1.5 minutes on the Celeron (the web build
-compiles raylib from scratch).
+compiles raylib from scratch). With the Inter font the web zip is 428 KB.
 
 The version comes from `GAME_VERSION` in `config.h`. Go through [PLAYTEST.md](PLAYTEST.md) first.

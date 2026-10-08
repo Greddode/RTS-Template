@@ -15,13 +15,18 @@
 #include "mapfile.h"
 #include "ui.h"
 #include <stddef.h>
+#include <stdio.h>
 
 #define MENU_W        360.0f   // reference sizes (720 px tall window), scaled by Ui()
 #define BUTTON_H      48.0f
 #define BUTTON_GAP    12.0f
 #define CONTROLS_W    760.0f
 #define CONTROLS_H    560.0f
-#define ROW_H         24.0f
+#define CONTROLS_TEXT     18.0f   // Controls rows: normal text size...
+#define CONTROLS_MIN_TEXT 16.0f   // ...shrunk at most to this, then wrapped
+#define CONTROLS_SPLIT    0.42f   // input column's share of the width
+#define CONTROLS_GAP      16.0f   // between the two columns
+#define CONTROLS_ROW_GAP  6.0f    // between rows
 
 #define SCREEN_MARGIN 10.0f    // panels never get closer than this to the window edge
 
@@ -36,6 +41,7 @@ static bool testPlay = false;   // playing the editor's map: "Main Menu" buttons
 
 static float FitWidth(float w);
 static int  controlsTab = CONTROLS_MOUSE;
+static float controlsScroll = 0.0f;
 
 void MenuOpen(void)
 {
@@ -60,7 +66,7 @@ static bool MapPickerPage(bool allowRandom)
     Rectangle panel = { (GetScreenWidth() - w)*0.5f, (GetScreenHeight() - h)*0.5f, w, h };
     UiPanel(panel);
     const char *title = "Choose a map";
-    int tw = MeasureText(title, (int)Ui(32.0f));
+    float tw = UiTextWidth(title, Ui(32.0f));
     UiLabel(title, panel.x + (w - tw)*0.5f, panel.y + Ui(20.0f), Ui(32.0f), RAYWHITE);
 
     Rectangle list = { panel.x + Ui(30.0f), panel.y + Ui(76.0f), w - Ui(60.0f), listH };
@@ -94,7 +100,7 @@ static Rectangle MenuFrame(const char *title, int buttons)
     float w = FitWidth(Ui(MENU_W)), h = Ui(90.0f + buttons*(BUTTON_H + BUTTON_GAP));
     Rectangle panel = { (GetScreenWidth() - w)*0.5f, (GetScreenHeight() - h)*0.5f, w, h };
     UiPanel(panel);
-    int tw = MeasureText(title, (int)Ui(36.0f));
+    float tw = UiTextWidth(title, Ui(36.0f));
     UiLabel(title, panel.x + (w - tw)*0.5f, panel.y + Ui(20.0f), Ui(36.0f), RAYWHITE);
     return (Rectangle){ panel.x + Ui(30.0f), panel.y + Ui(80.0f), w - Ui(60.0f), Ui(BUTTON_H) };
 }
@@ -105,11 +111,52 @@ static Rectangle NextButton(Rectangle b)
     return b;
 }
 
-static void ControlsRow(Rectangle panel, float w, float *y, const char *input, const char *action)
+// --- Controls page ------------------------------------------------------------------
+// Every row is measured: if a cell is too wide for its column, the whole table
+// is drawn smaller (down to CONTROLS_MIN_TEXT), and what still doesn't fit is
+// word-wrapped. The rows sit in a
+// scroll area, so a long list (or a short window) never runs past the panel.
+
+#define CONTROLS_ROWS_MAX (CONTROLS_COUNT + UNIT_TYPE_COUNT + BUILDING_TYPE_COUNT)
+
+typedef struct ControlsRowText { char input[96]; char action[96]; } ControlsRowText;
+
+// The rows of the chosen tab: CONTROLS, plus (Keyboard) the Train and Build hotkeys from the tables.
+static int ControlsRows(int tab, ControlsRowText *rows)
 {
-    UiLabel(input, panel.x + Ui(32.0f), *y, Ui(18.0f), GOLD);
-    UiLabel(action, panel.x + w*0.44f, *y, Ui(18.0f), RAYWHITE);   // column scales with the panel
-    *y += Ui(ROW_H);
+    int n = 0;
+    for (int i = 0; i < CONTROLS_COUNT; i++)
+    {
+        const ControlInfo *c = &CONTROLS[i];
+        if ((int)c->category != tab) continue;
+        snprintf(rows[n].input, sizeof(rows[n].input), "%s", (c->key != 0) ? TextFormat(c->input, UiKeyName(c->key)) : c->input);
+        snprintf(rows[n].action, sizeof(rows[n].action), "%s", c->action);
+        n++;
+    }
+    if (tab != CONTROLS_KEYBOARD) return n;
+    for (int t = 0; t < UNIT_TYPE_COUNT; t++)
+    {
+        const UnitStats *u = &UNIT_STATS[t];
+        if (u->trainedAt == BUILDING_NONE || u->hotkey == 0) continue;
+        snprintf(rows[n].input, sizeof(rows[n].input), "%s (%s selected)", UiKeyName(u->hotkey), BUILDING_STATS[u->trainedAt].name);
+        snprintf(rows[n].action, sizeof(rows[n].action), "Train %s", u->name);
+        n++;
+    }
+    for (int t = 0; t < BUILDING_TYPE_COUNT; t++)
+    {
+        const BuildingStats *b = &BUILDING_STATS[t];
+        if (b->cost <= 0 || b->hotkey == 0) continue;
+        snprintf(rows[n].input, sizeof(rows[n].input), "%s (workers selected)", UiKeyName(b->hotkey));
+        snprintf(rows[n].action, sizeof(rows[n].action), "Build %s", b->name);
+        n++;
+    }
+    return n;
+}
+
+// One cell at `size`, wrapped to its column. Returns its height.
+static float ControlsCell(const char *text, float x, float y, float width, float size, bool draw, Color color)
+{
+    return draw ? UiTextWrapped(text, x, y, width, size, color) : UiTextWrappedHeight(text, width, size);
 }
 
 // Returns true when the player leaves the page (Back button or Esc).
@@ -118,39 +165,55 @@ static bool ControlsPage(void)
     float w = FitWidth(Ui(CONTROLS_W)), h = Ui(CONTROLS_H);
     Rectangle panel = { (GetScreenWidth() - w)*0.5f, (GetScreenHeight() - h)*0.5f, w, h };
     UiPanel(panel);
-    UiLabel("Controls", panel.x + Ui(24.0f), panel.y + Ui(18.0f), Ui(32.0f), RAYWHITE);
+    UiLabel("Controls", panel.x + Ui(24.0f), panel.y + Ui(18.0f), UiFitSize("Controls", w - Ui(48.0f), Ui(32.0f), Ui(CONTROLS_MIN_TEXT)), RAYWHITE);
 
     static const char *tabs[CONTROLS_CATEGORY_COUNT] = { "Mouse", "Keyboard" };
-    UiTabs((Rectangle){ panel.x + Ui(24.0f), panel.y + Ui(64.0f), w - Ui(48.0f), Ui(36.0f) }, tabs, CONTROLS_CATEGORY_COUNT, &controlsTab);
+    if (UiTabs((Rectangle){ panel.x + Ui(24.0f), panel.y + Ui(64.0f), w - Ui(48.0f), Ui(36.0f) }, tabs, CONTROLS_CATEGORY_COUNT, &controlsTab))
+        controlsScroll = 0.0f;   // a new tab starts at its top
 
-    float y = panel.y + Ui(116.0f);
-    for (int i = 0; i < CONTROLS_COUNT; i++)
+    float backW = Ui(160.0f);
+    if (backW > w - Ui(48.0f)) backW = w - Ui(48.0f);
+    Rectangle back = { panel.x + w - Ui(24.0f) - backW, panel.y + h - Ui(64.0f), backW, Ui(BUTTON_H) };
+
+    // Rows: a scroll area between the tabs and the Back button. Two columns,
+    // input (gold) and action (white), with a gap between them.
+    Rectangle area = { panel.x + Ui(24.0f), panel.y + Ui(112.0f), w - Ui(48.0f), back.y - Ui(10.0f) - (panel.y + Ui(112.0f)) };
+    float inner = area.width - Ui(8.0f) - Ui(12.0f);   // padding left, room for the scrollbar right
+    float inputX = area.x + Ui(8.0f), inputW = inner*CONTROLS_SPLIT - Ui(CONTROLS_GAP)*0.5f;
+    float actionX = inputX + inner*CONTROLS_SPLIT + Ui(CONTROLS_GAP)*0.5f, actionW = inner*(1.0f - CONTROLS_SPLIT) - Ui(CONTROLS_GAP)*0.5f;
+
+    static ControlsRowText rows[CONTROLS_ROWS_MAX];
+    static float rowH[CONTROLS_ROWS_MAX];
+    int count = ControlsRows(controlsTab, rows);
+    // One text size for the whole table (mixed sizes look messy): the largest
+    // at which every cell fits on one line, but not below CONTROLS_MIN_TEXT.
+    float size = Ui(CONTROLS_TEXT);
+    for (int i = 0; i < count; i++)
     {
-        const ControlInfo *c = &CONTROLS[i];
-        if ((int)c->category != controlsTab) continue;
-        const char *input = (c->key != 0) ? TextFormat(c->input, UiKeyName(c->key)) : c->input;
-        ControlsRow(panel, w, &y, input, c->action);
+        size = UiFitSize(rows[i].input, inputW, size, Ui(CONTROLS_MIN_TEXT));
+        size = UiFitSize(rows[i].action, actionW, size, Ui(CONTROLS_MIN_TEXT));
+    }
+    float contentH = 0.0f;
+    for (int i = 0; i < count; i++)   // measure first: the scroll area needs the total height
+    {
+        float hi = ControlsCell(rows[i].input, 0, 0, inputW, size, false, GOLD);
+        float ha = ControlsCell(rows[i].action, 0, 0, actionW, size, false, RAYWHITE);
+        rowH[i] = ((hi > ha) ? hi : ha) + Ui(CONTROLS_ROW_GAP);
+        contentH += rowH[i];
     }
 
-    // Train and Build hotkeys come straight from the stats tables.
-    if (controlsTab == CONTROLS_KEYBOARD)
+    float y = area.y + UiScrollBegin(area, contentH, &controlsScroll);
+    for (int i = 0; i < count; i++)
     {
-        for (int t = 0; t < UNIT_TYPE_COUNT; t++)
+        if (y + rowH[i] >= area.y && y <= area.y + area.height)   // only rows that can be seen
         {
-            const UnitStats *u = &UNIT_STATS[t];
-            if (u->trainedAt == BUILDING_NONE || u->hotkey == 0) continue;
-            ControlsRow(panel, w, &y, TextFormat("%s (%s selected)", UiKeyName(u->hotkey), BUILDING_STATS[u->trainedAt].name),
-                        TextFormat("Train %s", u->name));
+            ControlsCell(rows[i].input, inputX, y, inputW, size, true, GOLD);
+            ControlsCell(rows[i].action, actionX, y, actionW, size, true, RAYWHITE);
         }
-        for (int t = 0; t < BUILDING_TYPE_COUNT; t++)
-        {
-            const BuildingStats *b = &BUILDING_STATS[t];
-            if (b->cost <= 0 || b->hotkey == 0) continue;
-            ControlsRow(panel, w, &y, TextFormat("%s (workers selected)", UiKeyName(b->hotkey)), TextFormat("Build %s", b->name));
-        }
+        y += rowH[i];
     }
+    UiScrollEnd();
 
-    Rectangle back = { panel.x + w - Ui(184.0f), panel.y + h - Ui(64.0f), Ui(160.0f), Ui(BUTTON_H) };
     return UiButton(back, "Back", KEY_ESCAPE);
 }
 
@@ -173,7 +236,7 @@ MenuAction MenuMain(void)
     b = NextButton(b);
     if (UiButton(b, "Map Editor", 0)) return MENU_EDITOR;
     b = NextButton(b);
-    if (UiButton(b, "Controls", 0)) showingControls = true;
+    if (UiButton(b, "Controls", 0)) { showingControls = true; controlsScroll = 0.0f; }
 #if !defined(__EMSCRIPTEN__)
     b = NextButton(b);
     if (UiButton(b, "Exit", 0)) return MENU_EXIT;
@@ -195,7 +258,7 @@ MenuAction MenuPause(void)
     b = NextButton(b);
     if (UiButton(b, FogEnabled() ? "Fog of war: On" : "Fog of war: Off", 0)) FogSetEnabled(!FogEnabled());
     b = NextButton(b);
-    if (UiButton(b, "Controls", 0)) showingControls = true;
+    if (UiButton(b, "Controls", 0)) { showingControls = true; controlsScroll = 0.0f; }
     b = NextButton(b);
     if (UiButton(b, testPlay ? "Back to Editor" : "Main Menu", 0)) return MENU_MAIN_MENU;
 #if !defined(__EMSCRIPTEN__)

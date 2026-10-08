@@ -10,8 +10,22 @@ float UiScale(void);          // window height / 720: multiply UI sizes by this
 float Ui(float v);            // shorthand for v * UiScale()
 bool  UiWantsMouse(void);     // mouse is over UI: the game world should ignore clicks / wheel
 
+bool  UiHover(Rectangle r);   // mouse over r (inside a scroll area: over its visible part)
+
+// Text. ALL text is drawn and measured through these, in the UI font.
+void  UiFontLoad(void);       // after InitWindow; UiBegin reloads it when the window height changes
+void  UiFontUnload(void);
+void  UiLabel(const char *text, float x, float y, float size, Color color);   // one line, top-left at x,y
+float UiTextWidth(const char *text, float size);
+float UiFitSize(const char *text, float width, float size, float minSize);   // largest size <= size that fits width
+// Word-wrapped to `width`: draws and returns the height used / only measures.
+float UiTextWrapped(const char *text, float x, float y, float width, float size, Color color);
+float UiTextWrappedHeight(const char *text, float width, float size);
+// A panel with word-wrapped text that scrolls (mouse wheel) when it doesn't fit.
+void  UiTextBox(Rectangle r, const char *text, float size, Color color, float *scroll);
+float UiTextBoxHeight(const char *text, float width, float size, float maxHeight);   // fits the text, up to maxHeight
+
 void UiPanel(Rectangle r);                                         // dark box that blocks the mouse
-void UiLabel(const char *text, float x, float y, float size, Color color);
 bool UiButton(Rectangle r, const char *label, int hotkey);         // true when clicked or hotkey pressed (0 = none)
 bool UiButtonEx(Rectangle r, const char *label, int hotkey, bool dimmed);   // dimmed: greyed out (still clickable)
 bool UiToggle(Rectangle r, const char *label, bool on);            // button that shows when it's the chosen one
