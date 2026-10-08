@@ -37,6 +37,8 @@
 
 #define DRAG_THRESHOLD 4.0f   // screen pixels the mouse must move before a click becomes a drag
 #define BOX_COLOR      (Color){ 60, 255, 90, 255 }
+#define RANGE_COLOR     (Color){ 255, 255, 255, 110 }   // a selected tower's range ring
+#define RANGE_RING_SEGMENTS 64
 #define BOX_FILL       (Color){ 60, 255, 90, 40 }
 #define AMOVE_COLOR    (Color){ 255, 70, 50, 255 }
 #define GHOST_OK       (Color){ 60, 230, 90, 255 }
@@ -406,12 +408,20 @@ void InputDraw(void)
     if (b != -1)
     {
         DrawRectangleLinesEx(BuildingRect(b), line, BOX_COLOR);
+        if (BUILDING_STATS[buildings[b].type].damage > 0.0f)   // a tower: its range
+            DrawRing(BuildingCentre(b), BUILDING_STATS[buildings[b].type].range - line, BUILDING_STATS[buildings[b].type].range, 0.0f, 360.0f, RANGE_RING_SEGMENTS, RANGE_COLOR);
 
         // Rally flag: a pole and a small cloth (plain rectangles, so it batches).
+        // Only on buildings that train units (a tower has nothing to send there).
+        bool trains = false;
+        for (int t = 0; t < UNIT_TYPE_COUNT; t++) trains |= (UNIT_STATS[t].trainedAt == buildings[b].type);
         Vector2 r = buildings[b].rally;
         float s = 1.0f/gameCamera.zoom;   // constant size on screen
-        DrawRectangleRec((Rectangle){ r.x - 1.0f*s, r.y - 18.0f*s, 2.0f*s, 18.0f*s }, RAYWHITE);
-        DrawRectangleRec((Rectangle){ r.x + 1.0f*s, r.y - 18.0f*s, 10.0f*s, 7.0f*s }, RALLY_COLOR);
+        if (trains)
+        {
+            DrawRectangleRec((Rectangle){ r.x - 1.0f*s, r.y - 18.0f*s, 2.0f*s, 18.0f*s }, RAYWHITE);
+            DrawRectangleRec((Rectangle){ r.x + 1.0f*s, r.y - 18.0f*s, 10.0f*s, 7.0f*s }, RALLY_COLOR);
+        }
     }
     int n = InputSelectedNode();
     if (n != -1) DrawCircleLinesV(goldNodes[n].pos, 16.0f, BOX_COLOR);
@@ -424,6 +434,9 @@ void InputDraw(void)
         Color c = (BuildingCanPlace(placingType, at) && BuildingsCanBuild(PLAYER_TEAM, placingType)) ? GHOST_OK : GHOST_BLOCKED;
         DrawRectangleRec(r, Fade(c, 0.35f));
         DrawRectangleLinesEx(r, line, c);
+        float range = BUILDING_STATS[placingType].range;
+        if (BUILDING_STATS[placingType].damage > 0.0f)   // placing a tower: what it would cover
+            DrawRing((Vector2){ r.x + r.width*0.5f, r.y + r.height*0.5f }, range - line, range, 0.0f, 360.0f, RANGE_RING_SEGMENTS, RANGE_COLOR);
     }
 
     // Attack-move armed: a red cross follows the mouse.

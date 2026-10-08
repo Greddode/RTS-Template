@@ -12,6 +12,7 @@
 // Called by UnitsTick() for each unit.
 Vector2 CombatUnitTick(int id);   // attacking unit: chase / hit; returns its movement step
 void    CombatAcquireTick(int id); // idle or attack-moving unit: attack a nearby enemy if there is one
+void    CombatBuildingTick(int id); // a finished tower (BUILDING_STATS damage > 0): fire at the nearest enemy in range
 
 // Damage one hit does after armor (formula and table in config.h).
 float CombatDamage(float base, DamageType type, ArmorType armorType, float armor);

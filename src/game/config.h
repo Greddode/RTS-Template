@@ -25,14 +25,22 @@
 #define UNIT_SIGHT     7
 #define BUILDING_SIGHT 8
 
-// Building types come first: units say where they're trained.
+// Damage and armor types (the table that combines them is further down, under
+// "Damage and armor"). Declared first: buildings and units both use them.
+typedef enum { DAMAGE_PIERCE, DAMAGE_BLUNT, DAMAGE_MAGIC, DAMAGE_TYPE_COUNT } DamageType;
+typedef enum { ARMOR_LIGHT, ARMOR_MEDIUM, ARMOR_HEAVY, ARMOR_TYPE_COUNT } ArmorType;
+
+// Building types come next: units say where they're trained.
 // To add a building: add it to the enum and give it a row in BUILDING_STATS.
 // If it has a cost and a hotkey, workers can build it (it appears in the
 // inspector's Build buttons automatically). `requires`: workers can only start
 // one while the team owns a FINISHED building of that type (BuildingsCanBuild()).
 // `description`: a sentence the inspector shows for it ("" = no box).
+// Attack columns (damage, damageType, range, cooldown, hitsGround, hitsAir):
+// damage > 0 makes it a tower that shoots arrows at the nearest enemy unit in
+// range it can see and hit (combat.c, CombatBuildingTick). 0 = doesn't attack.
 // Map files and the editor can place anything.
-typedef enum { BUILDING_NONE = -1, BUILDING_BASE, BUILDING_BARRACKS, BUILDING_ARCHERY_RANGE, BUILDING_ACADEMY, BUILDING_AIR_FACTORY, BUILDING_TYPE_COUNT } BuildingType;
+typedef enum { BUILDING_NONE = -1, BUILDING_BASE, BUILDING_BARRACKS, BUILDING_ARCHERY_RANGE, BUILDING_ACADEMY, BUILDING_AIR_FACTORY, BUILDING_GUARD_TOWER, BUILDING_TYPE_COUNT } BuildingType;
 
 typedef struct BuildingStats {
     const char *name;
@@ -44,16 +52,23 @@ typedef struct BuildingStats {
     bool        dropOff;     // workers can bring gold here
     int         sight;       // fog of war: tiles it reveals around it
     BuildingType requires;   // must own a finished one of these first; BUILDING_NONE = nothing
+    float       damage;      // per arrow, before armor; 0 = doesn't attack
+    DamageType  damageType;
+    float       range;       // world pixels, from its centre to the target's centre
+    float       cooldown;    // seconds between arrows
+    bool        hitsGround;  // shoots ground and naval units
+    bool        hitsAir;     // shoots flyers
     const char *description; // shown in the inspector (selected, or hovering its Build button); "" = none
 } BuildingStats;
 
 static const BuildingStats BUILDING_STATS[BUILDING_TYPE_COUNT] = {
-    //                           name             hp       size  cost  buildTime  hotkey  dropOff  sight           requires           description
-    [BUILDING_BASE]          = { "Base",          1500.0f, 3,    400,  40.0f,     KEY_B,  true,    BUILDING_SIGHT, BUILDING_NONE,     "Trains Workers and takes in the gold they mine." },
-    [BUILDING_BARRACKS]      = { "Barracks",       900.0f, 2,    150,  25.0f,     KEY_K,  false,   BUILDING_SIGHT, BUILDING_NONE,     "Trains Melee soldiers and Knights, the front line of your army." },
-    [BUILDING_ARCHERY_RANGE] = { "Archery Range",  800.0f, 2,    175,  25.0f,     KEY_R,  false,   BUILDING_SIGHT, BUILDING_NONE,     "Trains Archers and Scouts, who fight and scout from a distance." },
-    [BUILDING_ACADEMY]       = { "Academy",       1000.0f, 2,    450,  35.0f,     KEY_E,  false,   BUILDING_SIGHT, BUILDING_BARRACKS, "Trains Medics and Mages, once you own a finished Barracks." },
-    [BUILDING_AIR_FACTORY]   = { "Air Factory",    900.0f, 2,    250,  30.0f,     KEY_F,  false,   BUILDING_SIGHT, BUILDING_BARRACKS, "Trains Falcons and Airships, once you own a finished Barracks." },
+    //                           name             hp       size  cost  buildTime  hotkey  dropOff  sight           requires           damage  damageType     range   cooldown  hitsGround  hitsAir  description
+    [BUILDING_BASE]          = { "Base",          1500.0f, 3,    400,  40.0f,     KEY_B,  true,    BUILDING_SIGHT, BUILDING_NONE,     0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Workers and takes in the gold they mine." },
+    [BUILDING_BARRACKS]      = { "Barracks",       900.0f, 2,    150,  25.0f,     KEY_K,  false,   BUILDING_SIGHT, BUILDING_NONE,     0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Melee soldiers and Knights, the front line of your army." },
+    [BUILDING_ARCHERY_RANGE] = { "Archery Range",  800.0f, 2,    175,  25.0f,     KEY_R,  false,   BUILDING_SIGHT, BUILDING_NONE,     0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Archers and Scouts, who fight and scout from a distance." },
+    [BUILDING_ACADEMY]       = { "Academy",       1000.0f, 2,    450,  35.0f,     KEY_E,  false,   BUILDING_SIGHT, BUILDING_BARRACKS, 0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Medics and Mages, once you own a finished Barracks." },
+    [BUILDING_AIR_FACTORY]   = { "Air Factory",    900.0f, 2,    250,  30.0f,     KEY_F,  false,   BUILDING_SIGHT, BUILDING_BARRACKS, 0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Falcons and Airships, once you own a finished Barracks." },
+    [BUILDING_GUARD_TOWER]   = { "Guard Tower",   1000.0f, 2,    200,  25.0f,     KEY_V,  false,   BUILDING_SIGHT, BUILDING_BARRACKS, 12.0f,  DAMAGE_PIERCE, 190.0f, 0.7f,     true,       true,    "Shoots arrows at enemies in range, on the ground and in the air." },
 };
 
 // --- Damage and armor ---------------------------------------------------------------
@@ -62,8 +77,7 @@ static const BuildingStats BUILDING_STATS[BUILDING_TYPE_COUNT] = {
 // (CombatDamage() in combat.c). Hits on buildings do the plain base damage.
 // To add a type: add it to its enum (before the _COUNT), give it a name below,
 // and a row (damage type) or a column (armor type) in DAMAGE_VS_ARMOR.
-typedef enum { DAMAGE_PIERCE, DAMAGE_BLUNT, DAMAGE_MAGIC, DAMAGE_TYPE_COUNT } DamageType;
-typedef enum { ARMOR_LIGHT, ARMOR_MEDIUM, ARMOR_HEAVY, ARMOR_TYPE_COUNT } ArmorType;
+// (DamageType and ArmorType are declared above, before the building table.)
 
 static const char *const DAMAGE_TYPE_NAMES[DAMAGE_TYPE_COUNT] = { "Pierce", "Blunt", "Magic" };
 static const char *const ARMOR_TYPE_NAMES[ARMOR_TYPE_COUNT]   = { "Light", "Medium", "Heavy" };
@@ -247,7 +261,14 @@ static const ControlInfo CONTROLS[] = {
 // Tech buildings: after its first Barracks the AI builds one of each, in this order (each once
 // the one before is finished, and only when BuildingsCanBuild() allows it), and rebuilds them if
 // destroyed. Army training pauses while it saves up for the next one.
-static const BuildingType AI_TECH_ORDER[] = { BUILDING_ARCHERY_RANGE, BUILDING_ACADEMY };
+// AI_BUILDS_TOWERS 1: a Guard Tower is added to the end of that list, so the AI
+// builds one by its base once its other tech buildings stand (off for now).
+#define AI_BUILDS_TOWERS 0
+static const BuildingType AI_TECH_ORDER[] = { BUILDING_ARCHERY_RANGE, BUILDING_ACADEMY,
+#if AI_BUILDS_TOWERS
+    BUILDING_GUARD_TOWER,
+#endif
+};
 #define AI_TECH_COUNT ((int)(sizeof(AI_TECH_ORDER)/sizeof(AI_TECH_ORDER[0])))
 
 // Army mix: at each production building the AI trains the unit type (of those trained there)

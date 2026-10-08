@@ -23,6 +23,11 @@ typedef struct Building {
     bool         constructing;
     int          buildTicks;      // progress so far
 
+    // Towers (BUILDING_STATS damage > 0, combat.c)
+    int          cooldownTicks;   // ticks until it can fire again
+    int          target;          // the unit it's shooting at: slot...
+    unsigned int targetSerial;    // ...and serial (0 = none)
+
     // Production
     UnitType     queue[MAX_QUEUE];
     int          queueCount;

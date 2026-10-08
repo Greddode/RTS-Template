@@ -57,6 +57,17 @@
 //
 // Projectile pool full (rare): the shot is skipped, with one log line.
 //
+// Towers: a building with damage > 0 in BUILDING_STATS (the Guard Tower) is
+// ticked by BuildingsTick() once it's finished (CombatBuildingTick below).
+// Whenever its cooldown allows, it fires an arrow (same projectile pool, same
+// overkill bookkeeping) at its target. Like a unit, it keeps its target while
+// that's alive, visible, in range, not doomed and hittable; otherwise it asks
+// the spatial grid for the nearest enemy UNIT within its range (measured from
+// its centre) that its team can see, that isn't doomed and that it can hit
+// (hitsGround / hitsAir). Sticking to one target finishes units off instead
+// of spreading damage over a crowd. It doesn't shoot buildings. With nothing
+// in range it looks again every COMBAT_ACQUIRE_TICKS, like an idle unit.
+//
 // Overkill: each unit tracks `incomingDamage`, the damage in projectiles
 // already flying at it. Once that's enough to kill it, the unit is "doomed":
 // nobody fires at it or picks it as a target, so archers don't waste
@@ -461,6 +472,31 @@ void CombatAcquireTick(int id)
         u->leashed = true;
         u->leashHome = here;
     }
+}
+
+void CombatBuildingTick(int id)
+{
+    Building *b = &buildings[id];
+    const BuildingStats *s = &BUILDING_STATS[b->type];
+    if (b->cooldownTicks > 0) { b->cooldownTicks--; return; }
+
+    Vector2 from = BuildingCentre(id);
+    int target = b->target;
+    bool keep = b->targetSerial != 0 && UnitIsAlive(target, b->targetSerial);
+    if (keep)
+    {
+        const Unit *t = &units[target];
+        keep = FogCanSee(b->team, t->pos) && t->hp > t->incomingDamage && Vector2Distance(from, t->pos) <= s->range &&
+               (UnitIsFlying(t) ? s->hitsAir : s->hitsGround);
+    }
+    if (!keep) target = GridFindNearestEnemy(from, s->range, b->team, s->hitsGround, s->hitsAir);   // fog, doomed, can-hit: all checked there
+    if (target == -1) { b->targetSerial = 0; b->cooldownTicks = COMBAT_ACQUIRE_TICKS - 1; return; }   // nothing in range: look again shortly
+    b->target = target;
+    b->targetSerial = units[target].serial;
+
+    const UnitStats *t = &UNIT_STATS[units[target].type];
+    FireProjectile(from, false, target, units[target].serial, CombatDamage(s->damage, s->damageType, t->armorType, t->armor));
+    b->cooldownTicks = (int)(s->cooldown*TICK_RATE) - 1;   // fires every `cooldown` seconds
 }
 
 // Projectiles home in on their target. If it dies first, they vanish.

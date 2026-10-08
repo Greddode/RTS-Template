@@ -64,7 +64,7 @@ After the tiles, one object per line. Coordinates are in tiles, `0 0` is the top
 | `gold <x> <y> <amount>` | A gold node with 1 to 1,000,000 gold (1500 is the usual). |
 
 - **Teams:** `0` = the player, `1` = the computer.
-- **Building keywords:** `base` (3×3 tiles), `barracks`, `archery_range`, `academy`, `air_factory` (2×2 each).
+- **Building keywords:** `base` (3×3 tiles), `barracks`, `archery_range`, `academy`, `air_factory`, `guard_tower` (2×2 each).
 - **Unit keywords:** `worker`, `melee`, `archer`, `knight`, `medic`, `mage`, `scout`, `falcon`, `airship`.
   Flyers (`falcon`, `airship`) may also stand on water, rock and lava (see the tile table).
 - Keywords are the `name` columns of `BUILDING_STATS` / `UNIT_STATS` in `config.h`, in any case,

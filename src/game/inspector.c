@@ -4,6 +4,7 @@
 // (slot, serial), so nothing here can point at a dead unit or building):
 //   one unit        type, health bar, damage / range / speed, current order
 //   several units   an icon and count per type, total health
+//   a tower         its attack (damage, range, rate, ground/air) from BUILDING_STATS
 //   a building      name, health, production queue (click an icon to cancel
 //                   and get the gold back), progress, and Train buttons
 //                   (greyed "Requires ..." while a unit's `requires` building
@@ -250,12 +251,25 @@ static void DrawBuilding(Rectangle panel, int id)
     UiLabel(TextFormat("%d / %d", (int)b->hp, (int)s->hp), x + Ui(210.0f), y - Ui(2.0f), Ui(SMALL), RAYWHITE);
     y += Ui(26.0f);
 
+    // A tower: its attack from the table, in the right half (towers train nothing).
+    if (s->damage > 0.0f)
+    {
+        float rx = panel.x + Ui(INFO_W) + Ui(PAD), ry = panel.y + Ui(PAD) + Ui(26.0f);
+        SectionTitle(panel, b->constructing ? "Attack (once finished)" : "Attack");
+        UiLabel(TextFormat("Damage %g %s   Range %d   Every %g s", s->damage, DAMAGE_TYPE_NAMES[s->damageType], (int)s->range, s->cooldown), rx, ry, Ui(SMALL), RAYWHITE);
+        const char *hits = (s->hitsGround && s->hitsAir) ? "Hits ground and air" : s->hitsAir ? "Hits air only" : "Hits ground only";
+        UiLabel(hits, rx, ry + Ui(20.0f), Ui(SMALL), RAYWHITE);
+    }
+
     if (b->constructing)
     {
         UiLabel(TextFormat("Under construction  %d%%", (int)(BuildingBuildProgress(id)*100.0f)), x, y, Ui(SMALL), ORANGE);
         Bar(x, y + Ui(22.0f), Ui(300.0f), BuildingBuildProgress(id), ORANGE);
         return;   // no production until it's finished
     }
+    int trains = 0;
+    for (int t = 0; t < UNIT_TYPE_COUNT; t++) trains += (UNIT_STATS[t].trainedAt == b->type);
+    if (trains == 0) return;   // nothing to queue (a tower)
 
     // Queue: one small button per queued unit; click to cancel (refunded).
     UiLabel(TextFormat("Queue %d/%d", b->queueCount, MAX_QUEUE), x, y, Ui(SMALL), LIGHTGRAY);

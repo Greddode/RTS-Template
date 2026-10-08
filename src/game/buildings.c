@@ -27,6 +27,7 @@
 // attacked, but can't train units or take gold drop-offs.
 
 #include "buildings.h"
+#include "combat.h"
 #include "economy.h"
 #include "fog.h"
 #include "grid.h"
@@ -380,7 +381,9 @@ void BuildingsTick(void)
     for (int i = 0; i < MAX_BUILDINGS; i++)
     {
         Building *b = &buildings[i];
-        if (!b->active || b->constructing || b->queueCount == 0) continue;
+        if (!b->active || b->constructing) continue;   // unfinished towers don't fire either
+        if (BUILDING_STATS[b->type].damage > 0.0f) CombatBuildingTick(i);   // a tower: shoot (combat.c)
+        if (b->queueCount == 0) continue;
 
         if (++b->trainTicks < (int)(UNIT_STATS[b->queue[0]].trainTime*TICK_RATE)) continue;
 

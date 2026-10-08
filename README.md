@@ -6,7 +6,7 @@ made to be read, changed and extended. It runs on **Linux desktop and in the bro
 
 **What you get:** workers that mine gold and construct buildings, 9 unit types (Melee, Archer,
 Knight, Worker, Medic, Mage, Scout, and the flying Falcon and Airship) with armor and damage
-types, splash damage, healers and air/ground targeting, 5 production buildings with prerequisites, a computer opponent that builds, expands and attacks,
+types, splash damage, healers and air/ground targeting, 5 production buildings plus a Guard Tower, with prerequisites, a computer opponent that builds, expands and attacks,
 fog of war, a minimap, A* pathfinding with a per-frame time budget, a map editor with
 test play, swappable PNG art (placeholders included), a readable UI font (Inter), a debug
 overlay (F3), and a web build ready to upload to itch.io. Units, buildings, tiles and damage types are rows in tables in
@@ -215,7 +215,8 @@ Every 2 seconds the AI:
    **Tech buildings:** once a Barracks is finished, it builds one of each building in
    `AI_TECH_ORDER` (Archery Range, then Academy), each after the one before is finished, rebuilt
    if destroyed. It pauses army training while it saves up for the next one, and uses any it was
-   given by the map file.
+   given by the map file. It doesn't build Guard Towers: set `AI_BUILDS_TOWERS` to 1 in
+   `config.h` and one is added to the end of that list (one tower by its base, rebuilt if lost).
 2. **Workers:** each base aims for **8 workers per reachable gold node** near it (at most **16**),
    training at the base that needs them most. When every base is saturated it stops, and the
    gold goes into the army.
@@ -306,7 +307,7 @@ as templates to paint over.
 
 ```
 assets/sprites/units/      melee.png  archer.png  worker.png  knight.png  medic.png  mage.png  scout.png  falcon.png  airship.png   (names from UNIT_STATS)
-assets/sprites/buildings/  base.png   barracks.png  archery_range.png  academy.png  air_factory.png  (names from BUILDING_STATS)
+assets/sprites/buildings/  base.png   barracks.png  archery_range.png  academy.png  air_factory.png  guard_tower.png  (names from BUILDING_STATS)
 assets/sprites/tiles/      grass.png  dirt.png  water.png  rock.png  gravel.png  lava.png  (names from TILE_INFO)
 ```
 
@@ -514,6 +515,28 @@ these. `UnitsCanTrain(team, type)` in `units.c` is the one check, used by `Build
 so the player and the AI follow the same rule. Until then the Train button is greyed and says
 "Airship - Requires Academy"; clicking it or pressing its hotkey says "Requires Academy".
 
+## Guard Tower (buildings that attack)
+
+`BUILDING_STATS` has six attack columns: `damage`, `damageType`, `range`, `cooldown`,
+`hitsGround`, `hitsAir`. `damage` 0 means the building doesn't attack (every building except the
+tower). The **Guard Tower** (200 gold, hotkey V, needs a finished Barracks; 1,000 HP) shoots
+12 Pierce arrows every 0.7 s at enemies within 190 px of its centre, on the ground and in the
+air. Pierce does half damage to Heavy armor, so Knights (and Airships) are its counter.
+
+- **Targets** (`CombatBuildingTick()` in `combat.c`, called by `BuildingsTick()`): like a unit,
+  it keeps shooting its target while that one is alive, visible, in range and not doomed;
+  otherwise it asks the spatial grid for the nearest enemy unit in range that the team can see
+  (fog), that it can hit (`hitsGround` / `hitsAir`) and that arrows already in flight won't kill
+  (the same overkill rule as units). It shoots units, not buildings. Arrows come from the normal
+  projectile pool.
+- **Unfinished towers don't fire**, and a destroyed one stops (arrows already flying still land).
+- **Selected:** a ring shows its range, and the inspector shows "Damage 12 Pierce, Range 190,
+  Every 0.7 s, Hits ground and air", all from the table. The ring also shows while placing one.
+- Measured: 10 towers beat 30 attacking Melee (about the same gold) with 5 towers left; 300
+  Melee overrun them (killing 4 on the way).
+- Make another tower by adding a `BUILDING_STATS` row with `damage` > 0 (for example a cheaper
+  ground-only "Bolt Tower" with `hitsAir` false): no other code needed.
+
 ## Adding a new unit type (walkthrough)
 
 Example: a **Spearman**, a pierce-damage foot soldier with medium armor, trained at the Barracks.
@@ -580,8 +603,8 @@ Academy is one enum entry (`BUILDING_TEMPLE`, before `BUILDING_TYPE_COUNT`) plus
 `requires` is the prerequisite:
 
 ```c
-//                           name       hp       size  cost  buildTime  hotkey  dropOff  sight           requires          description
-[BUILDING_TEMPLE]        = { "Temple",  900.0f,  2,    300,  30.0f,     KEY_T,  false,   BUILDING_SIGHT, BUILDING_ACADEMY, "Trains Priests, once you own a finished Academy." },
+//                           name       hp       size  cost  buildTime  hotkey  dropOff  sight           requires          damage  damageType     range  cooldown  hitsGround  hitsAir  description
+[BUILDING_TEMPLE]        = { "Temple",  900.0f,  2,    300,  30.0f,     KEY_T,  false,   BUILDING_SIGHT, BUILDING_ACADEMY, 0.0f,   DAMAGE_PIERCE, 0.0f,  0.0f,     false,      false,   "Trains Priests, once you own a finished Academy." },
 ```
 
 Workers get a "Temple - Requires Academy" button until an Academy is finished. The Temple gets
@@ -633,7 +656,7 @@ generated from `CONTROLS` and the key bindings in `config.h`; this table mirrors
 | D / G (Academy selected) | Train a Medic (125) / Mage (200); queue up to 5 |
 | L / U (Air Factory selected) | Train a Falcon (70) / Airship (300, needs a finished Academy); queue up to 5 |
 | Click a queue icon (building selected) | Cancel that unit, gold refunded (destroying the building loses its queue) |
-| B / K / R / E / F (workers selected) | Build a Base (400) / Barracks (150) / Archery Range (175) / Academy (450, needs a finished Barracks) / Air Factory (250, needs a finished Barracks): a ghost follows the mouse, green = OK, red = blocked; left click places, right click / Esc / the key again cancels |
+| B / K / R / E / F / V (workers selected) | Build a Base (400) / Barracks (150) / Archery Range (175) / Academy (450, needs a finished Barracks) / Air Factory (250, needs a finished Barracks) / Guard Tower (200, needs a finished Barracks): a ghost follows the mouse, green = OK, red = blocked; left click places, right click / Esc / the key again cancels |
 | Esc (web: Ctrl) | Cancel a pending attack-move or building placement; otherwise open the pause menu (Resume, Fog of war on/off, Controls, Main Menu, Exit). The web build uses Left Ctrl because browsers use Esc to leave fullscreen; change it with `KEY_PAUSE` in `config.h` |
 | F1 | Debug: spawn a wave of 20 enemies |
 | F2 | Map editor on the current map (F2 / Exit returns to the paused game) |
@@ -673,13 +696,13 @@ and `src/editor/` for the editor.
 | `game/minimap.c` | Minimap: cached terrain/fog texture, unit dots, camera outline, click to move camera / units |
 | `game/fog.c` | Fog of war: per-team visibility grid, recomputed 5× a second, one batched overlay pass |
 | `game/heal.c` | Healers (`canHeal`): find the nearest damaged ally (grid), walk into range, heal per tick, spread over patients, follow-and-heal order, green heal lines |
-| `game/combat.c` | Attacking, chasing, auto-targeting (aggro), what can hit what (`hitsGround` / `hitsAir`), projectile pool (arrows, magic bolts and bombs with splash, splash rings), minimum range, the damage formula (`CombatDamage()`: damage type × armor type, minus armor) |
+| `game/combat.c` | Attacking, chasing, auto-targeting (aggro), what can hit what (`hitsGround` / `hitsAir`), towers (`CombatBuildingTick`), projectile pool (arrows, magic bolts and bombs with splash, splash rings), minimum range, the damage formula (`CombatDamage()`: damage type × armor type, minus armor) |
 | `game/ai.c` | Enemy AI: trains workers to a per-node target, builds a Barracks and tech buildings, expands to new gold, trains its army (and air defence against player flyers), sends idle units at player units they can hit |
 | `game/economy.c` | Gold per team, gold node pool, worker mining loop, gold HUD (top right) |
 | `game/buildings.c` | Building pool, tile blocking, placement checks, prerequisites (`BuildingsCanBuild()`), production queue (cancel/refund), rally points, gold drop-off lookup, construction by workers, drawing |
 | `game/ui.c` | Tiny immediate-mode UI (buttons, panels, labels, tabs, scroll areas, word-wrapped text boxes), scales with window height, blocks clicks from reaching the game; the UI font: all text is drawn and measured here |
 | `game/menu.c` | Main menu, map picker, pause menu, Controls page (measured: shrinks / wraps to its columns, scrolls), Victory / Defeat screen |
-| `game/inspector.c` | Bottom panel for the selection; Train / Build buttons generated from the stats tables; description box; hotkey clash check |
+| `game/inspector.c` | Bottom panel for the selection; Train / Build buttons generated from the stats tables; description box; a tower's attack (and its range ring, drawn by `input.c`); hotkey clash check |
 | `tests/tile_class_test.c` | Automated test: every tile × movement class, building blocking, the map edge, straight lines, regions, air paths, map characters |
 | `tests/controls_overflow_test.c` | Automated test: draws the Controls page at 6 window sizes (and with very long names) and fails if any text leaves its column (see the file) |
 
@@ -694,6 +717,7 @@ and 30 Scouts; 732 units in all).
 |---|---|---|---|
 | FPS, 100 workers + 300 vs 300 | 60 (min 60) | 390 avg (min 355) | 59 (min 59) |
 | Same, with the Inter font (camera zoomed out over the base and the battle, Base selected) | 60 (min 59.6) | 351–406 avg (3 runs; 1.0.0 in the same runs: 381–433) | |
+| Same, plus 10 Guard Towers per side | 60 (min 59.9) | 335–352 avg (3 runs; without towers in the same runs: 348–360) | |
 | Same, each side's 300 including 15 Falcons and 5 Airships | 60 (min 59.5) | 331–356 avg (3 runs; all-ground in the same runs: 315–412) | |
 | Map editor, whole 128×128 map on screen | | 124 avg | |
 | FPS, full unit pool (2,046 units) | 59 (min 58) | 293 avg (min 259) | not measured |
