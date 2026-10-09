@@ -51,7 +51,8 @@ These come first, in this order before `tiles`:
 The tile rows are read exactly as written: inside the grid, `#` is rock, not a comment. The
 characters and the three "who can cross it" columns come from `TILE_INFO` in `src/game/map.c`;
 a new tile type gets its own character there. Every unit has a movement class (`moveClass` in
-`UNIT_STATS`); all units are ground units for now.
+`UNIT_STATS`): Falcons and Airships are air units, Boats and Ships are naval units, the rest are
+ground units.
 
 ## Objects
 
@@ -64,9 +65,13 @@ After the tiles, one object per line. Coordinates are in tiles, `0 0` is the top
 | `gold <x> <y> <amount>` | A gold node with 1 to 1,000,000 gold (1500 is the usual). |
 
 - **Teams:** `0` = the player, `1` = the computer.
-- **Building keywords:** `base` (3×3 tiles), `barracks`, `archery_range`, `academy`, `air_factory`, `guard_tower` (2×2 each).
-- **Unit keywords:** `worker`, `melee`, `archer`, `knight`, `medic`, `mage`, `scout`, `falcon`, `airship`.
-  Flyers (`falcon`, `airship`) may also stand on water, rock and lava (see the tile table).
+- **Building keywords:** `base` (3×3 tiles), `barracks`, `archery_range`, `academy`, `air_factory`, `guard_tower`, `dock` (2×2 each).
+- **A Dock needs water next to it:** its whole footprint on ground tiles, and a water tile (`~`)
+  within 1 tile of its edge (`BUILDING_WATER_MARGIN`). Otherwise the map doesn't load
+  ("Dock must be next to water").
+- **Unit keywords:** `worker`, `melee`, `archer`, `knight`, `medic`, `mage`, `scout`, `falcon`, `airship`, `boat`, `ship`.
+  Flyers (`falcon`, `airship`) may also stand on water, rock and lava; `boat` and `ship` only on
+  water (see the tile table).
 - **Airships start empty:** map files don't hold transport cargo.
 - Keywords are the `name` columns of `BUILDING_STATS` / `UNIT_STATS` in `config.h`, in any case,
   with a space written as `_` ("Archery Range" → `archery_range`). A unit or building you add to
@@ -82,10 +87,10 @@ After the tiles, one object per line. Coordinates are in tiles, `0 0` is the top
   tile characters are used.
 - Every object is inside the map, on a tile it can stand on: buildings and gold on ground tiles
   (grass, dirt, gravel) with the building's whole footprint on them, units on tiles their
-  movement class allows (see the table above).
+  movement class allows (see the table above). A Dock also needs water next to it (see above).
 - Objects don't overlap (a unit or gold node on a building's tiles counts as overlapping).
 - **Each team has at least one building**, or it would lose at once.
-- At most 1,024 objects; at most 64 buildings, 64 gold nodes and 2,048 units.
+- At most 1,024 objects per map (`MAP_MAX_OBJECTS`), of which at most 64 buildings and 64 gold nodes.
 
 A mistake shows on screen as `file name:line: what's wrong`, and the game plays the Random map
 instead. The editor's **Save** writes the file, then reads it back with the same checks.

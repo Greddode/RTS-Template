@@ -89,8 +89,11 @@ it into the page.
 Included: `dire_straight_64x64.map` ("Dire Straight", 64×64) and `river_crossing_128x128.map`
 ("River Crossing", 128×128), both made with the map editor, and `islands_64x64.map` ("Islands",
 64×64): two islands with lava fields and water between them and no ground path, so the only way
-across is by air (the AI learns to ferry its army there, see below). **The full file format, the rules a
-map must follow and tips for fair maps are in [`maps/FORMAT.md`](maps/FORMAT.md).**
+across is by air (the AI learns to ferry its army there, see below), and `harbor_64x64.map`
+("Harbor", 64×64): a bay between the two bases with room for a Dock on each shore, and land
+bridges north and south so the ground war still works (see [Naval units](#naval-units-dock-boat-ship)).
+**The full file format, the rules a map must follow and tips for fair maps are in
+[`maps/FORMAT.md`](maps/FORMAT.md).**
 
 ### Map file format
 
@@ -134,8 +137,8 @@ Every unit has a **movement class** (`moveClass` in `UNIT_STATS`, the `MoveClass
 - **AIR** units never pathfind: they fly in a straight line over every tile whose `air` column
   is `true` (all six) and over buildings, and they can't leave the map.
 - **The Falcon and the Airship are AIR units** (see [Flying units](#flying-units-what-can-hit-what-and-unit-prerequisites));
-  the other seven are GROUND. NAVAL is only the foundation: the checks are in place, but no unit
-  uses it yet, and there's nothing like a dock or a landing yet.
+  the **Boat and the Ship are NAVAL** (see [Naval units](#naval-units-dock-boat-ship)); the
+  other seven are GROUND. There are no landings: naval units don't carry troops.
 - **One check for everything:** `MapTileWalkable(class, x, y)` (map.c) is used by pathfinding,
   movement, straight-line checks (`MapLineClear`), formation spots (`UnitsOpenSpots`) and the
   "can I get there?" regions (`PathRegion(class, pos)`, which the AI uses). Change a column in
@@ -188,10 +191,10 @@ playing (opens the current map; **Exit** or F2 returns to the paused game exactl
 
 | Tool | What it does |
 |---|---|
-| Tile brushes (Grass, Dirt, Water, Rock, Gravel, Lava) | Left-click / drag to paint; brush size 1, 3 or 5. A tile is never painted under an object that couldn't stand on it (water or lava under a Base). **Ctrl+Z** undoes painting (32 steps) |
+| Tile brushes (Grass, Dirt, Water, Rock, Gravel, Lava) | Left-click / drag to paint; brush size 1, 3 or 5. A tile is never painted under an object that couldn't stand on it (water or lava under a Base, land under a Boat), and painting land never takes the last water from a Dock. **Ctrl+Z** undoes painting (32 steps) |
 | Player / AI | Which team new objects belong to |
-| Base, Barracks, Archery Range, Academy | Click to place; a green/red ghost shows if it fits (same rules as map files) |
-| Melee, Archer, Worker, Knight, Medic, Mage, Scout | Click or drag to place units. The **brush size** (1, 3, 5) places a 1×1, 3×3 or 5×5 block centred on the cursor, one unit per tile. Tiles that can't take a unit (water, rock, a building, a unit already there) are skipped: the ghost shows every tile, green = a unit goes there, red = skipped. A drag never puts two units on one tile. At the limit (`MAP_MAX_OBJECTS`, 1,024 objects per map) the stroke stops with a message |
+| Base, Barracks, Archery Range, Academy, Air Factory, Guard Tower, Dock | Click to place; a green/red ghost shows if it fits (same rules as map files), and a refused click says why ("Dock must be next to water") |
+| Melee, Archer, Worker, Knight, Medic, Mage, Scout, Falcon, Airship, Boat, Ship | Click or drag to place units. The **brush size** (1, 3, 5) places a 1×1, 3×3 or 5×5 block centred on the cursor, one unit per tile. Tiles that can't take that unit (for a ground unit water or rock, for a Boat or Ship anything but water; a building or a unit already there) are skipped: the ghost shows every tile, green = a unit goes there, red = skipped. A drag never puts two units on one tile. At the limit (`MAP_MAX_OBJECTS`, 1,024 objects per map) the stroke stops with a message |
 | Gold + amount | Click to place a gold node with that amount |
 | Erase object | Click (or drag over) objects to remove them |
 | New map 32 / 64 / 128 | Start again, all grass |
@@ -381,8 +384,8 @@ usual coloured shape, so you can replace art one type at a time. Placeholder PNG
 as templates to paint over.
 
 ```
-assets/sprites/units/      melee.png  archer.png  worker.png  knight.png  medic.png  mage.png  scout.png  falcon.png  airship.png   (names from UNIT_STATS)
-assets/sprites/buildings/  base.png   barracks.png  archery_range.png  academy.png  air_factory.png  guard_tower.png  (names from BUILDING_STATS)
+assets/sprites/units/      melee.png  archer.png  worker.png  knight.png  medic.png  mage.png  scout.png  falcon.png  airship.png  boat.png  ship.png   (names from UNIT_STATS)
+assets/sprites/buildings/  base.png   barracks.png  archery_range.png  academy.png  air_factory.png  guard_tower.png  dock.png  (names from BUILDING_STATS)
 assets/sprites/tiles/      grass.png  dirt.png  water.png  rock.png  gravel.png  lava.png  (names from TILE_INFO)
 ```
 
@@ -656,6 +659,57 @@ air. Pierce does half damage to Heavy armor, so Knights (and Airships) are its c
 - Make another tower by adding a `BUILDING_STATS` row with `damage` > 0 (for example a cheaper
   ground-only "Bolt Tower" with `hitsAir` false): no other code needed.
 
+## Naval units (Dock, Boat, Ship)
+
+| | Dock | Boat | Ship |
+|---|---|---|---|
+| Key | D (worker) | T (Dock) | P (Dock) |
+| Cost, time | 250 gold, 30 s, needs a Barracks | 80 gold, 7 s | 400 gold, 18 s |
+| HP, armor | 900 | 90, Light | 520, Heavy (3) |
+| Attack | none | 7 Pierce, range 110, hits **ground, boats and flyers** | 32 Blunt, range 240, 40 px splash (**friends too**), **can't hit flyers** |
+| Role | trains Boats and Ships | fast, fragile skirmisher | slow, long-range bombardment |
+
+All of it comes from table rows in `config.h`: the Boat and Ship have `moveClass MOVE_NAVAL`
+and `trainedAt BUILDING_DOCK`, so they path, move and spread out on water only, using the same
+code as ground units (see [Tiles and movement classes](#tiles-and-movement-classes)). Moving
+ones leave a short fading wake (`DrawWake` in `units.c`, drawn with the shapes so it adds no draw calls).
+Art: `dock.png`, `boat.png`, `ship.png`.
+
+**The `needsWater` rule:** a `BUILDING_STATS` column. A building with it must stand wholly on
+open ground (never on water) with a water tile within `BUILDING_WATER_MARGIN` (1, `buildings.h`)
+of its edge. One function, `BuildingsPlacementOK()`, decides this for the player's click, the
+green/red ghost, the AI, the map loader and the editor, and says why not: "Dock must be next to
+water". Give any new building `needsWater true` to get the same rule.
+
+**Spawning:** a naval unit appears on the free water tile next to the Dock nearest its centre.
+If every one is taken, training is refused *before* paying ("No free water next to the Dock"); a
+unit that finishes while the water is full waits. A Dock's rally point starts on its water.
+
+**The reach rule, `PathCanReach(moveClass, from, target, range)` (`path.c`):** can a unit of this
+class get somewhere its target is within range? Flyers: always. Same region (`PathRegion`, a
+flood fill of the tiles that class can cross): yes, one lookup. Otherwise it checks the tiles
+around the target for one in the unit's own region that comes within range. Everything that
+picks or keeps a target asks it (combat, `GridFindNearestEnemy`, `BuildingsFindNearestEnemy`,
+healing, the AI), so:
+- a Melee ignores a Boat out at sea; an Archer, Scout, Mage or Guard Tower on the shore shoots one in range;
+- a target that becomes unreachable mid-chase is dropped; an attack order on one becomes a move to
+  the nearest spot it can get to (the shore);
+- a Medic doesn't walk toward a hurt boat, and an idle Boat ignores units inland.
+
+Move orders stay in the unit's own region too: a Boat ordered onto land goes to the nearest water
+of its own lake, a Melee ordered into a lake stops on the shore.
+
+**Map files and the editor:** keywords `dock`, `boat`, `ship` (see [`maps/FORMAT.md`](maps/FORMAT.md)).
+A Dock away from water or a Boat on land fails to load, with the line number and the reason.
+
+**The AI** ignores water by default: no Dock, Boats or Ships. `AI_BUILDS_DOCKS` (`config.h`,
+**off**) adds a Dock to its tech list (skipped when there's no shore near its base) and Boats to
+its army mix (at most `AI_BOATS_MAX`, 6); it never trains Ships and has no naval tactics, and
+this switch isn't part of the tested behaviour. See [Extending the AI](#extending-the-ai).
+
+**Tests:** `tests/naval_test.c` (in `make test`) checks placement, spawning, sailing, targeting,
+the Ship's splash, regions, map keywords and the editor on a map it builds itself.
+
 ## Adding a new unit type (walkthrough)
 
 Example: a **Spearman**, a pierce-damage foot soldier with medium armor, trained at the Barracks.
@@ -723,8 +777,8 @@ Academy is one enum entry (`BUILDING_TEMPLE`, before `BUILDING_TYPE_COUNT`) plus
 `requires` is the prerequisite:
 
 ```c
-//                           name       hp       size  cost  buildTime  hotkey  dropOff  sight           requires          damage  damageType     range  cooldown  hitsGround  hitsAir  description
-[BUILDING_TEMPLE]        = { "Temple",  900.0f,  2,    300,  30.0f,     KEY_T,  false,   BUILDING_SIGHT, BUILDING_ACADEMY, 0.0f,   DAMAGE_PIERCE, 0.0f,  0.0f,     false,      false,   "Trains Priests, once you own a finished Academy." },
+//                           name       hp       size  cost  buildTime  hotkey  dropOff  sight           requires          needsWater  damage  damageType     range  cooldown  hitsGround  hitsAir  description
+[BUILDING_TEMPLE]        = { "Temple",  900.0f,  2,    300,  30.0f,     KEY_T,  false,   BUILDING_SIGHT, BUILDING_ACADEMY, false,      0.0f,   DAMAGE_PIERCE, 0.0f,  0.0f,     false,      false,   "Trains Priests, once you own a finished Academy." },
 ```
 
 Workers get a "Temple - Requires Academy" button until an Academy is finished. The Temple gets
@@ -775,11 +829,12 @@ generated from `CONTROLS` and the key bindings in `config.h`; this table mirrors
 | C / O (Archery Range selected) | Train an Archer (100) / Scout (60); queue up to 5 |
 | D / G (Academy selected) | Train a Medic (125) / Mage (200); queue up to 5 |
 | L / U (Air Factory selected) | Train a Falcon (70) / Airship (450, needs a finished Academy); queue up to 5 |
+| T / P (Dock selected) | Train a Boat (80) / Ship (400); queue up to 5. Refused, unpaid, when no water next to the Dock is free |
 | L / U (Airship selected) | Nearby idle ground units board it / unload everything below it |
 | Right click your Airship (ground units selected) | They walk to it and get in (8 slots; a Knight takes 2) |
 | Ctrl + right click ground (web: Shift), Airship selected | It flies there and unloads (on the nearest open ground) |
 | Click a queue icon (building selected) | Cancel that unit, gold refunded (destroying the building loses its queue) |
-| B / K / R / E / F / V (workers selected) | Build a Base (400) / Barracks (150) / Archery Range (175) / Academy (450, needs a finished Barracks) / Air Factory (250, needs a finished Barracks) / Guard Tower (200, needs a finished Barracks): a ghost follows the mouse, green = OK, red = blocked; left click places, right click / Esc / the key again cancels |
+| B / K / R / E / F / V / D (workers selected) | Build a Base (400) / Barracks (150) / Archery Range (175) / Academy (450, needs a finished Barracks) / Air Factory (250, needs a finished Barracks) / Guard Tower (200, needs a finished Barracks) / Dock (250, needs a finished Barracks, must touch water): a ghost follows the mouse, green = OK, red = blocked; left click places, right click / Esc / the key again cancels |
 | Esc (web: Ctrl) | Cancel a pending attack-move or building placement; otherwise open the pause menu (Resume, Fog of war on/off, Controls, Main Menu, Exit). The web build uses Left Ctrl because browsers use Esc to leave fullscreen; change it with `KEY_PAUSE` in `config.h` |
 | F1 | Debug: spawn a wave of 20 enemies |
 | F4 | Debug: spawn 500 units for each side around its base (a mix of Melee, Archers, Knights, Mages, Medics, Scouts and Falcons), on free spots; press again for more, up to the unit pool (`MAX_UNITS`, 16,384). For testing big battles: `DEBUG_ARMY_SIZE` and `DEBUG_ARMY_MIX` in `config.h` |
@@ -834,6 +889,10 @@ and `src/editor/` for the editor.
 
 ## Performance
 
+**In short, on the Celeron:** 60 FPS holds up to about **2,000 units in a big fight**; normal
+games (a few hundred units) run at 60 with lots of headroom; the game itself uses about **30 MB**
+of memory.
+
 Measured for version 1.0.0 on the target hardware: **Intel Celeron N4120** (4 cores, 1.1 GHz
 base), **4 GB RAM** (3.6 GB usable), integrated graphics, Arch Linux. Release build, 1280×720.
 Scenario: River Crossing, 100 workers mining plus a 300 vs 300 battle (Melee, Archers, Knights
@@ -850,7 +909,7 @@ and 30 Scouts; 732 units in all).
 | Sim tick (30 per second), battle | 1.1–1.7 ms avg, 4.8 ms worst | | |
 | Fog of war update (5 per second) | 0.14–0.23 ms avg, 0.38 ms worst (battle) | | |
 | **v1.1, unit pool raised to 16,384:** 100 workers + 300 vs 300 (scripted again, ~708 units; runs interleaved with the previous commit) | 60 (min 59.8) in 3 of 4 runs; one run dipped to 45 for 5 s with the sim tick under 1.5 ms, and it didn't happen again (previous commit: 60, min 59.8, 4 of 4) | 356–631 avg (previous commit, 2,048 pool, in the same runs: 363–591) | |
-| Memory (v1.1) | the game's own (private) memory: 29–32 MB at every unit count up to 16,000. Total RSS: 91–168 MB, mostly the graphics driver's shared libraries (136 MB of it shared, the same in the menu before and after this change) | | wasm heap 29 MB, sized at startup to fit the unit pool; it never grew, even at 16,000 units |
+| Memory (v1.1) | about 30 MB (29–32 MB private memory at every unit count up to 16,000). Total RSS reads 91–168 MB because it also counts the graphics driver's shared libraries, which any OpenGL program maps | | wasm heap 29 MB, sized at startup to fit the unit pool; it never grew, even at 16,000 units |
 | Startup: packing the art atlas | 2–4 ms | | 10–40 ms |
 | Startup: loading the font (two sizes) | 6 ms | | 13–15 ms |
 | Startup: first frame | ~190 ms from `main()` (1.0.0: the same) | | ~360 ms after the page opens, served locally (1.0.0: ~340 ms). v1.1, measured differently (from navigation start, headless Firefox, fresh profile): 1.0–1.1 s, the previous commit 1.07–1.22 s the same way; ~110 ms of it is the game's own start-up |
@@ -925,6 +984,17 @@ machine lower the uncapped numbers a lot. Press F3 to see the live numbers.
 - **Every unit is the same size** (`UNIT_RADIUS`), so the Airship is drawn as small as a Falcon.
 - **The AI's only fighting flyers are Falcons** (at most 4). It uses Airships only to ferry, never
   for bombing runs, and ignores water: no Docks, Boats or Ships. See [Extending the AI](#extending-the-ai).
+- **Big crowds: three good places to improve** (measured costs in [Big battles](#big-battles-f4-how-many-units-it-can-take)):
+  - **Separation** (units pushing apart) is about half the sim tick at 16,000 units: each unit
+    checks every unit in the grid cells around it, every tick. Look at `SeparationPush()` in
+    `units.c` and the cell size in `grid.h`. Any change alters battle results (so the AI vs AI
+    baselines in `tests/baselines/` change too).
+  - **Path-queue throughput:** an order for thousands of units queues thousands of searches, and
+    the per-frame budget (`PATH_BUDGET_MS`, `path.h`; the queue is worked in `PathUpdate()`,
+    `path.c`) clears ~75 a second, so units start walking minutes late. Shared paths or a flow
+    field per group would fix it.
+  - **Minimap drawing:** one dot per unit, every frame (~2 ms at 16,000 units). Look at
+    `DrawDots()` in `minimap.c`; drawing dots less often, or into a texture, would cut it.
 - **The AI's ferrying is simple.** It lands near the closest player building rather than
   picking a weak spot, and it lands even under fire once it's close (`AI_FERRY_COMMIT_TILES`);
   `AI_FERRY_DANGER_TILES` above 0 makes it more careful but on Islands it then turned back on most
