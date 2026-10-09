@@ -163,6 +163,8 @@ static void SelectInBox(Rectangle box)
 
 // The closest unit of `team` under the cursor, or -1. Uses its own buffer:
 // callers often hold the selection in `found` while asking this.
+// Flyers are drawn above ground units, so a flyer under the cursor wins the
+// click (an Airship that just unloaded hovers right over the unit it let out).
 static int UnitAtPoint(Vector2 point, int team)
 {
     static int near[64];
@@ -172,12 +174,15 @@ static int UnitAtPoint(Vector2 point, int team)
 
     int best = -1;
     float bestDist = reach;
+    bool bestFlying = false;
     for (int k = 0; k < count; k++)
     {
         if (units[near[k]].team != team) continue;
         if (team != PLAYER_TEAM && !FogCanSee(PLAYER_TEAM, units[near[k]].pos)) continue;   // hidden by fog
         float d = Vector2Distance(units[near[k]].pos, point);
-        if (d <= bestDist) { best = near[k]; bestDist = d; }
+        bool flying = UnitIsFlying(&units[near[k]]);
+        if (d > reach || (bestFlying && !flying)) continue;
+        if ((flying && !bestFlying) || d <= bestDist) { best = near[k]; bestDist = d; bestFlying = flying; }
     }
     return best;
 }

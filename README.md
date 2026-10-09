@@ -12,7 +12,7 @@ test play, swappable PNG art (placeholders included), a readable UI font (Inter)
 overlay (F3), and a web build ready to upload to itch.io. Units, buildings, tiles and damage types are rows in tables in
 `config.h`: most new content needs no other code.
 
-Version **1.0.0** (`GAME_VERSION` in `config.h`, shown on the main menu). Licences of the
+Version **1.1.0** (`GAME_VERSION` in `config.h`, shown on the main menu). Licences of the
 libraries used: [THIRD_PARTY.md](THIRD_PARTY.md). Release checklist: [PLAYTEST.md](PLAYTEST.md).
 
 ## Screenshots
@@ -909,11 +909,12 @@ and 30 Scouts; 732 units in all).
 | Sim tick (30 per second), battle | 1.1–1.7 ms avg, 4.8 ms worst | | |
 | Fog of war update (5 per second) | 0.14–0.23 ms avg, 0.38 ms worst (battle) | | |
 | **v1.1, unit pool raised to 16,384:** 100 workers + 300 vs 300 (scripted again, ~708 units; runs interleaved with the previous commit) | 60 (min 59.8) in 3 of 4 runs; one run dipped to 45 for 5 s with the sim tick under 1.5 ms, and it didn't happen again (previous commit: 60, min 59.8, 4 of 4) | 356–631 avg (previous commit, 2,048 pool, in the same runs: 363–591) | |
+| **v1.1.0, naval included:** 100 workers + 300 vs 300 (60 each of Melee, Knights, Archers, Mages, Medics) + 15 Boats and 5 Ships per side fighting on the river (748 units; fog off, camera zoomed out over base and battle, 40 s per run) | 60 avg in 10 runs; 8 of them min 59.9–60, 2 had a single 1-second window at 40–45 FPS late in the run with the sim tick at 0.2 ms (not reproduced in 5 runs logging every frame: longest frame 18 ms). Without the boats, same runs: 60 (min 59.9) in 5 of 5 | 553–560 avg, min 471–482 (without the boats, same runs: 628–631, min 455–564) | 60 avg (min 59.0 / 59.8), 2 runs; without the boats: 59.9 / 60.0 (min 59.0 / 59.7) |
 | Memory (v1.1) | about 30 MB (29–32 MB private memory at every unit count up to 16,000). Total RSS reads 91–168 MB because it also counts the graphics driver's shared libraries, which any OpenGL program maps | | wasm heap 29 MB, sized at startup to fit the unit pool; it never grew, even at 16,000 units |
 | Startup: packing the art atlas | 2–4 ms | | 10–40 ms |
 | Startup: loading the font (two sizes) | 6 ms | | 13–15 ms |
 | Startup: first frame | ~190 ms from `main()` (1.0.0: the same) | | ~360 ms after the page opens, served locally (1.0.0: ~340 ms). v1.1, measured differently (from navigation start, headless Firefox, fresh profile): 1.0–1.1 s, the previous commit 1.07–1.22 s the same way; ~110 ms of it is the game's own start-up |
-| Download size | | | 448 KB zip (v1.1; the previous commit: 447 KB, so the bigger unit pool adds nothing; 1.0.0: 207 KB) |
+| Download size | | | 438 KB zip (1.1.0: 448,701 bytes; 1.0.0: 207 KB) |
 
 ### Big battles (F4): how many units it can take
 
@@ -968,7 +969,7 @@ machine lower the uncapped numbers a lot. Press F3 to see the live numbers.
 - **The AI has one fixed plan** (no difficulty levels, no reaction to what you build): a fixed
   army mix and build order. By default it sees through the fog (`AI_SEES_THROUGH_FOG`).
 - **Balance is rough.** In equal-gold fights Melee beats every other type, and in AI vs AI games
-  one side of the map won 4 of 5. On the **Random** map the player starts with 20 soldiers
+  on River Crossing the east start won 20 of 20. On the **Random** map the player starts with 20 soldiers
   and the AI with none, which makes it easy. See [Balance (measured)](#balance-measured) below.
 - **Destroyed buildings you can't see simply disappear.** Remembered enemy buildings stay on the
   map until you look again, but one destroyed out of sight vanishes instead of leaving a "ghost".
@@ -1013,9 +1014,18 @@ Equal-gold fights (1,500 gold each, two groups walking into each other):
 | Mage vs Archer | Mage wins, keeps 86% |
 | Knight vs Mage | Knight wins, keeps 62% |
 
-AI vs AI (the same AI on both sides, fog off, starting soldiers removed) ends in 4–10 minutes,
-and both sides train all seven ground unit types on every map with an economy. Which side wins depends
-on the map: side 0 won 4 of 5. Against a player who does nothing, the AI wins in 1–4 minutes. Change the numbers in
+AI vs AI (the same AI on both sides, fog off; version 1.1.0, 20 games per map, one side's AI starting
+0.5–5 s late, alternating sides):
+
+| Map | Wins from the player's start | Wins from the AI's start | No winner after 20 min |
+|---|---|---|---|
+| Dire Straight | 11 | 9 | 0 |
+| Harbor | 6 | 13 | 1 |
+| Islands | 1 | 5 | 14 (both sides mine out their island; nobody can afford to take the middle) |
+| River Crossing | 0 | 20 | 0 (the AI's start, in the east, wins: swapping the two bases swaps the winner) |
+| Random | 20 | 0 | 0 (the player's side starts with 20 soldiers) |
+
+Against a player who does nothing, the AI wins in 1–4 minutes. Change the numbers in
 `UNIT_STATS` (`config.h`); every number above can be re-measured after a change.
 
 ## Automatic builds
@@ -1040,7 +1050,7 @@ puts two zips in `dist/`:
 - `rts-kit-<version>-source.zip`: the source, `README.md`, `LICENSE`, `THIRD_PARTY.md`,
   `PLAYTEST.md`, `assets/`, `maps/` and `tests/`, in one `rts-kit-<version>/` folder.
 
-For 1.0.0: web zip 207 KB, source zip 149 KB; about 1.5 minutes on the Celeron (the web build
-compiles raylib from scratch). With the Inter font the web zip is 428 KB.
+For 1.1.0: web zip 438 KB (448,701 bytes), source zip about 431 KB; 1 min 43 s on the
+Celeron (the web build compiles raylib from scratch). For 1.0.0 they were 207 KB and 149 KB.
 
 The version comes from `GAME_VERSION` in `config.h`. Go through [PLAYTEST.md](PLAYTEST.md) first.

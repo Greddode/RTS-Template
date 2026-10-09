@@ -6,7 +6,7 @@
 #include "raylib.h"   // for the KEY_ constants below
 
 // Shown on the main menu. Bump it for each release (major.minor.patch).
-#define GAME_VERSION "1.0.0"
+#define GAME_VERSION "1.1.0"
 
 #define SCREEN_W 1280
 #define SCREEN_H 720
@@ -241,6 +241,7 @@ static const ControlInfo CONTROLS[] = {
     { CONTROLS_MOUSE,    0,                "Right click enemy",      "Attack unit or building" },
     { CONTROLS_MOUSE,    0,                "Right click gold",       "Workers mine it" },
     { CONTROLS_MOUSE,    0,                "Right click unfinished", "Workers help build it" },
+    { CONTROLS_MOUSE,    0,                "Right click hurt ally",  "Medics follow and heal it" },
     { CONTROLS_MOUSE,    0,                "Placing: left / right",  "Place building / cancel" },
     { CONTROLS_MOUSE,    0,                "Middle drag",            "Pan camera" },
     { CONTROLS_MOUSE,    0,                "Minimap: left / drag",   "Move the camera there" },

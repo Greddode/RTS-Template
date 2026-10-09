@@ -1,0 +1,3 @@
+# Headless AI vs AI result (both sides run the AI, unlimited path budget). Tier 2 compares against this.
+REGIONS Islands (64x64)             27801c8c0dd99e00
+RESULT Islands (64x64)              ticks  21600 (12:00)  no winner yet    units   6/  1 buildings  7/ 5 gold    20/   76  hash a3b8960e030c47f7
