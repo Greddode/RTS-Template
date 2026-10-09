@@ -13,6 +13,9 @@
 Vector2 CombatUnitTick(int id);   // attacking unit: chase / hit; returns its movement step
 void    CombatAcquireTick(int id); // idle or attack-moving unit: attack a nearby enemy if there is one
 void    CombatBuildingTick(int id); // a finished tower (BUILDING_STATS damage > 0): fire at the nearest enemy in range
+// Can this unit fight that target: in range from where it stands, or able to get in range
+// (PathCanReach)? Combat, auto-targeting and the AI all ask this before chasing.
+bool    CombatCanEngage(int unit, bool isBuilding, int target);
 
 // Damage one hit does after armor (formula and table in config.h).
 float CombatDamage(float base, DamageType type, ArmorType armorType, float armor);

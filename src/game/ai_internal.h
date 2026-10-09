@@ -25,7 +25,6 @@ bool        AiFerryNeedsTransport(void);        // no player building can be rea
 bool        AiFerrySaving(void);                // saving gold for an Academy / Air Factory / Airship (army training waits)
 bool        AiFerryBuilding(void);              // getting the Academy / Air Factory ready (the tech order waits)
 bool        AiFerryOwns(int unit);              // an Airship the ferry logic is flying (the idle-army loop leaves it alone)
-bool        AiFerryCanReach(Vector2 from, Vector2 to);   // same ground region (used while ferrying, so units aren't sent at the sea)
 bool        AiFerryExpand(int worker, Vector2 spot);     // AI_FERRY_EXPANSION: carry this Worker over to build a Base at spot
 bool        AiFerryHasIdleShip(void);
 const char *AiFerryStatus(void);                // "" when there's nothing to say

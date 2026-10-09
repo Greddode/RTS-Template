@@ -33,4 +33,16 @@ void       PathReset(void);                                  // drop every reque
 void       PathComputeRegions(void);
 int        PathRegion(MoveClass moveClass, Vector2 worldPos);
 
+// The reach rule (combat, healing, the AI and its ferry all use it): can a unit
+// of this class standing at `from` get to a spot where `target` (a unit's
+// position as a 0-size rectangle, or a building's footprint) is within
+// `range`? AIR: always. Otherwise some tile of its own region must come that
+// close, so a Melee never chases a boat out at sea and a boat never chases
+// a unit inland. Being in range already isn't checked here (callers do that:
+// a unit may always hit what it can hit from where it stands).
+bool       PathCanReach(MoveClass moveClass, Vector2 from, Rectangle target, float range);
+// The tile centre of `region` nearest `near` (searching outward); false if none within PATH_NEAREST_MAX_TILES.
+bool       PathNearestInRegion(MoveClass moveClass, int region, Vector2 near, Vector2 *out);
+#define PATH_NEAREST_MAX_TILES 64
+
 #endif

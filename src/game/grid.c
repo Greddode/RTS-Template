@@ -16,6 +16,7 @@
 #include "grid.h"
 #include "units.h"
 #include "fog.h"
+#include "path.h"
 
 static int cellHead[GRID_W * GRID_H];
 static int nextInCell[MAX_UNITS];
@@ -63,18 +64,21 @@ int GridQuery(Rectangle area, int *out, int maxOut)
 }
 
 // Check one cell for a closer enemy (helper for GridFindNearestEnemy).
-static void CheckCellForEnemy(int cx, int cy, Vector2 pos, int myTeam, bool ground, bool air, int *best, float *bestDistSq)
+typedef struct Searcher { Vector2 pos; int team; bool ground, air; MoveClass moveClass; float range; } Searcher;
+static void CheckCellForEnemy(int cx, int cy, const Searcher *s, int *best, float *bestDistSq)
 {
     if (cx < 0 || cy < 0 || cx >= GRID_W || cy >= GRID_H) return;
     for (int i = cellHead[cy*GRID_W + cx]; i != -1; i = nextInCell[i])
     {
-        if (!UnitIsActiveInWorld(&units[i]) || units[i].team == myTeam) continue;
-        if (!(UnitIsFlying(&units[i]) ? air : ground)) continue;   // e.g. a flyer, for a melee attacker
-        if (!FogCanSee(myTeam, units[i].pos)) continue;   // can't target what it can't see
+        if (!UnitIsActiveInWorld(&units[i]) || units[i].team == s->team) continue;
+        if (!(UnitIsFlying(&units[i]) ? s->air : s->ground)) continue;   // e.g. a flyer, for a melee attacker
+        if (!FogCanSee(s->team, units[i].pos)) continue;   // can't target what it can't see
         if (units[i].hp <= units[i].incomingDamage) continue;   // already doomed by projectiles in flight
-        float dx = units[i].pos.x - pos.x, dy = units[i].pos.y - pos.y;
+        float dx = units[i].pos.x - s->pos.x, dy = units[i].pos.y - s->pos.y;
         float d = dx*dx + dy*dy;
-        if (d < *bestDistSq) { *bestDistSq = d; *best = i; }
+        if (d >= *bestDistSq) continue;
+        if (d > s->range*s->range && !PathCanReach(s->moveClass, s->pos, (Rectangle){ units[i].pos.x, units[i].pos.y, 0, 0 }, s->range)) continue;   // a boat at sea, for a Melee
+        *bestDistSq = d; *best = i;
     }
 }
 
@@ -85,8 +89,9 @@ static void CheckCellForEnemy(int cx, int cy, Vector2 pos, int myTeam, bool grou
 // will kill are skipped (targeting them would only waste attacks), and so are
 // enemies hidden by the fog of war. `ground` / `air`: which enemies count
 // (an attacker passes its hitsGround / hitsAir from UNIT_STATS).
-int GridFindNearestEnemy(Vector2 pos, float maxDist, int myTeam, bool ground, bool air)
+int GridFindNearestEnemy(Vector2 pos, float maxDist, int myTeam, bool ground, bool air, MoveClass moveClass, float range)
 {
+    Searcher s = { pos, myTeam, ground, air, moveClass, range };
     int cx = CellCoord(pos.x, GRID_W), cy = CellCoord(pos.y, GRID_H);
     int best = -1;
     float bestDistSq = maxDist*maxDist;
@@ -102,13 +107,13 @@ int GridFindNearestEnemy(Vector2 pos, float maxDist, int myTeam, bool ground, bo
         // The ring's top and bottom rows, then its left and right columns.
         for (int x = cx - r; x <= cx + r; x++)
         {
-            CheckCellForEnemy(x, cy - r, pos, myTeam, ground, air, &best, &bestDistSq);
-            if (r > 0) CheckCellForEnemy(x, cy + r, pos, myTeam, ground, air, &best, &bestDistSq);
+            CheckCellForEnemy(x, cy - r, &s, &best, &bestDistSq);
+            if (r > 0) CheckCellForEnemy(x, cy + r, &s, &best, &bestDistSq);
         }
         for (int y = cy - r + 1; y <= cy + r - 1; y++)
         {
-            CheckCellForEnemy(cx - r, y, pos, myTeam, ground, air, &best, &bestDistSq);
-            CheckCellForEnemy(cx + r, y, pos, myTeam, ground, air, &best, &bestDistSq);
+            CheckCellForEnemy(cx - r, y, &s, &best, &bestDistSq);
+            CheckCellForEnemy(cx + r, y, &s, &best, &bestDistSq);
         }
     }
     return best;

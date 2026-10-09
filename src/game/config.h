@@ -39,8 +39,12 @@ typedef enum { ARMOR_LIGHT, ARMOR_MEDIUM, ARMOR_HEAVY, ARMOR_TYPE_COUNT } ArmorT
 // Attack columns (damage, damageType, range, cooldown, hitsGround, hitsAir):
 // damage > 0 makes it a tower that shoots arrows at the nearest enemy unit in
 // range it can see and hit (combat.c, CombatBuildingTick). 0 = doesn't attack.
-// Map files and the editor can place anything.
-typedef enum { BUILDING_NONE = -1, BUILDING_BASE, BUILDING_BARRACKS, BUILDING_ARCHERY_RANGE, BUILDING_ACADEMY, BUILDING_AIR_FACTORY, BUILDING_GUARD_TOWER, BUILDING_TYPE_COUNT } BuildingType;
+// `needsWater`: it must stand on ground with a water tile touching its edge
+// (within BUILDING_WATER_MARGIN tiles, buildings.h), like a Dock. Every
+// placement (player, ghost, AI, map files, editor) goes through one rule,
+// BuildingsPlacementOK() in buildings.c. Map files and the editor can place
+// any type (no cost or `requires`), but only where that rule allows.
+typedef enum { BUILDING_NONE = -1, BUILDING_BASE, BUILDING_BARRACKS, BUILDING_ARCHERY_RANGE, BUILDING_ACADEMY, BUILDING_AIR_FACTORY, BUILDING_GUARD_TOWER, BUILDING_DOCK, BUILDING_TYPE_COUNT } BuildingType;
 
 typedef struct BuildingStats {
     const char *name;
@@ -52,6 +56,7 @@ typedef struct BuildingStats {
     bool        dropOff;     // workers can bring gold here
     int         sight;       // fog of war: tiles it reveals around it
     BuildingType requires;   // must own a finished one of these first; BUILDING_NONE = nothing
+    bool        needsWater;  // must touch water (a Dock); false = anywhere on open ground
     float       damage;      // per arrow, before armor; 0 = doesn't attack
     DamageType  damageType;
     float       range;       // world pixels, from its centre to the target's centre
@@ -62,13 +67,14 @@ typedef struct BuildingStats {
 } BuildingStats;
 
 static const BuildingStats BUILDING_STATS[BUILDING_TYPE_COUNT] = {
-    //                           name             hp       size  cost  buildTime  hotkey  dropOff  sight           requires           damage  damageType     range   cooldown  hitsGround  hitsAir  description
-    [BUILDING_BASE]          = { "Base",          1500.0f, 3,    400,  40.0f,     KEY_B,  true,    BUILDING_SIGHT, BUILDING_NONE,     0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Workers and takes in the gold they mine." },
-    [BUILDING_BARRACKS]      = { "Barracks",       900.0f, 2,    150,  25.0f,     KEY_K,  false,   BUILDING_SIGHT, BUILDING_NONE,     0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Melee soldiers and Knights, the front line of your army." },
-    [BUILDING_ARCHERY_RANGE] = { "Archery Range",  800.0f, 2,    175,  25.0f,     KEY_R,  false,   BUILDING_SIGHT, BUILDING_NONE,     0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Archers and Scouts, who fight and scout from a distance." },
-    [BUILDING_ACADEMY]       = { "Academy",       1000.0f, 2,    450,  35.0f,     KEY_E,  false,   BUILDING_SIGHT, BUILDING_BARRACKS, 0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Medics and Mages, once you own a finished Barracks." },
-    [BUILDING_AIR_FACTORY]   = { "Air Factory",    900.0f, 2,    250,  30.0f,     KEY_F,  false,   BUILDING_SIGHT, BUILDING_BARRACKS, 0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Falcons and Airships, once you own a finished Barracks." },
-    [BUILDING_GUARD_TOWER]   = { "Guard Tower",   1000.0f, 2,    200,  25.0f,     KEY_V,  false,   BUILDING_SIGHT, BUILDING_BARRACKS, 12.0f,  DAMAGE_PIERCE, 190.0f, 0.7f,     true,       true,    "Shoots arrows at enemies in range, on the ground and in the air." },
+    //                           name             hp       size  cost  buildTime  hotkey  dropOff  sight           requires           needsWater  damage  damageType     range   cooldown  hitsGround  hitsAir  description
+    [BUILDING_BASE]          = { "Base",          1500.0f, 3,    400,  40.0f,     KEY_B,  true,    BUILDING_SIGHT, BUILDING_NONE,     false,      0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Workers and takes in the gold they mine." },
+    [BUILDING_BARRACKS]      = { "Barracks",       900.0f, 2,    150,  25.0f,     KEY_K,  false,   BUILDING_SIGHT, BUILDING_NONE,     false,      0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Melee soldiers and Knights, the front line of your army." },
+    [BUILDING_ARCHERY_RANGE] = { "Archery Range",  800.0f, 2,    175,  25.0f,     KEY_R,  false,   BUILDING_SIGHT, BUILDING_NONE,     false,      0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Archers and Scouts, who fight and scout from a distance." },
+    [BUILDING_ACADEMY]       = { "Academy",       1000.0f, 2,    450,  35.0f,     KEY_E,  false,   BUILDING_SIGHT, BUILDING_BARRACKS, false,      0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Medics and Mages, once you own a finished Barracks." },
+    [BUILDING_AIR_FACTORY]   = { "Air Factory",    900.0f, 2,    250,  30.0f,     KEY_F,  false,   BUILDING_SIGHT, BUILDING_BARRACKS, false,      0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Falcons and Airships, once you own a finished Barracks." },
+    [BUILDING_GUARD_TOWER]   = { "Guard Tower",   1000.0f, 2,    200,  25.0f,     KEY_V,  false,   BUILDING_SIGHT, BUILDING_BARRACKS, false,      12.0f,  DAMAGE_PIERCE, 190.0f, 0.7f,     true,       true,    "Shoots arrows at enemies in range, on the ground and in the air." },
+    [BUILDING_DOCK]          = { "Dock",           900.0f, 2,    250,  30.0f,     KEY_D,  false,   BUILDING_SIGHT, BUILDING_BARRACKS, true,       0.0f,   DAMAGE_PIERCE,   0.0f, 0.0f,     false,      false,   "Trains Boats and Ships. Must be built on the shore, touching water." },
 };
 
 // --- Damage and armor ---------------------------------------------------------------
@@ -116,7 +122,7 @@ typedef enum { MOVE_GROUND, MOVE_NAVAL, MOVE_AIR, MOVE_CLASS_COUNT } MoveClass;
 // Transports (transport.c): `cargoCapacity` > 0 makes a unit carry other
 // units, that many slots' worth; `cargoSlots` is how many slots a unit takes
 // in one (0 = it can't be carried).
-typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UNIT_MAGE, UNIT_SCOUT, UNIT_FALCON, UNIT_AIRSHIP, UNIT_TYPE_COUNT } UnitType;
+typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UNIT_MAGE, UNIT_SCOUT, UNIT_FALCON, UNIT_AIRSHIP, UNIT_BOAT, UNIT_SHIP, UNIT_TYPE_COUNT } UnitType;
 
 typedef struct UnitStats {
     const char  *name;
@@ -159,6 +165,8 @@ static const UnitStats UNIT_STATS[UNIT_TYPE_COUNT] = {
     [UNIT_SCOUT]   = { "Scout",   BUILDING_ARCHERY_RANGE, KEY_O,   35.0f,  4.0f,  DAMAGE_PIERCE, 100.0f, 1.0f,    110.0f, 0.0f,  ARMOR_LIGHT,  60,   5.0f,      11,         false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       true,    BUILDING_NONE, 0,             1,          MOVE_GROUND, "A fast, far-sighted rider for finding the enemy, fragile in a fight." },
     [UNIT_FALCON]  = { "Falcon",  BUILDING_AIR_FACTORY,   KEY_L,   45.0f,  6.0f,  DAMAGE_PIERCE,  90.0f, 0.9f,    140.0f, 0.0f,  ARMOR_LIGHT,  70,   6.0f,      9,          false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       true,    BUILDING_NONE, 0,             0,          MOVE_AIR,    "A very fast, fragile flyer that pecks at air and ground from a distance." },
     [UNIT_AIRSHIP] = { "Airship", BUILDING_AIR_FACTORY,   KEY_U,  420.0f, 28.0f,  DAMAGE_BLUNT,   24.0f, 3.0f,     38.0f, 3.0f,  ARMOR_HEAVY,  450,  18.0f,     8,          false,   0.0f,     0.0f,      44.0f,  0.5f,    0.0f,     true,       false,   BUILDING_ACADEMY, 8,             0,          MOVE_AIR,    "A slow, armored airship that carries 8 slots of ground troops over anything and bombs the ground below (friends too), but can't hit flyers." },
+    [UNIT_BOAT]    = { "Boat",    BUILDING_DOCK,          KEY_T,   90.0f,  7.0f,  DAMAGE_PIERCE, 110.0f, 1.0f,    105.0f, 0.0f,  ARMOR_LIGHT,  80,   7.0f,      8,          false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       true,    BUILDING_NONE, 0,             0,          MOVE_NAVAL,  "A fast, light boat with an archer aboard: shoots ships, the shore and flyers, but sinks quickly." },
+    [UNIT_SHIP]    = { "Ship",    BUILDING_DOCK,          KEY_P,  520.0f, 32.0f,  DAMAGE_BLUNT,  240.0f, 3.0f,     40.0f, 3.0f,  ARMOR_HEAVY,  400,  18.0f,     9,          false,   0.0f,     0.0f,      40.0f,  0.4f,    0.0f,     true,       false,   BUILDING_NONE, 0,             0,          MOVE_NAVAL,  "A slow, armored warship whose cannon hits everything where the shot lands (friends too) from far away, but can't hit flyers." },
 };
 
 // Auto-targeting leash: an idle unit that starts chasing an enemy on its own
@@ -306,10 +314,18 @@ static const ControlInfo CONTROLS[] = {
 // destroyed. Army training pauses while it saves up for the next one.
 // AI_BUILDS_TOWERS 1: a Guard Tower is added to the end of that list, so the AI
 // builds one by its base once its other tech buildings stand (off for now).
+// AI_BUILDS_DOCKS 1: a Dock is added too (near its base, touching water; skipped if there's no
+// such spot), and Boats join its army mix (at most AI_BOATS_MAX alive). Off: it never builds a
+// Dock or trains Boats or Ships.
 #define AI_BUILDS_TOWERS 0
+#define AI_BUILDS_DOCKS  0
+#define AI_BOATS_MAX     6
 static const BuildingType AI_TECH_ORDER[] = { BUILDING_ARCHERY_RANGE, BUILDING_ACADEMY,
 #if AI_BUILDS_TOWERS
     BUILDING_GUARD_TOWER,
+#endif
+#if AI_BUILDS_DOCKS
+    BUILDING_DOCK,
 #endif
 };
 #define AI_TECH_COUNT ((int)(sizeof(AI_TECH_ORDER)/sizeof(AI_TECH_ORDER[0])))
@@ -328,6 +344,9 @@ static const AiArmyShare AI_ARMY_MIX[] = {
     { UNIT_MAGE,      1,     0 },
     { UNIT_SCOUT,     1,     2 },
     { UNIT_MEDIC,     1,     4 },
+#if AI_BUILDS_DOCKS
+    { UNIT_BOAT,      2,     AI_BOATS_MAX },
+#endif
 };
 #define AI_ARMY_MIX_COUNT ((int)(sizeof(AI_ARMY_MIX)/sizeof(AI_ARMY_MIX[0])))
 

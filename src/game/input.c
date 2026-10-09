@@ -368,6 +368,18 @@ bool InputIsPlacing(BuildingType type)
     return placing && placingType == type;
 }
 
+// Can the player put this building here? One answer for the ghost's colour and
+// the click: its prerequisite, then the placement rule (BuildingCanPlace).
+bool InputPlacementOK(BuildingType type, Vector2 at, const char **why)
+{
+    if (!BuildingsCanBuild(PLAYER_TEAM, type))
+    {
+        if (why) *why = TextFormat("Requires %s", BUILDING_STATS[BUILDING_STATS[type].requires].name);
+        return false;
+    }
+    return BuildingCanPlace(type, at, why);
+}
+
 // Pay, place the unfinished building, and send the nearest selected worker.
 static void PlaceBuilding(Vector2 at)
 {
@@ -379,7 +391,8 @@ static void PlaceBuilding(Vector2 at)
         placing = false;
         return;
     }
-    if (!BuildingCanPlace(placingType, at)) { UiShowMessage("Can't build there"); return; }
+    const char *why;
+    if (!InputPlacementOK(placingType, at, &why)) { UiShowMessage(why); return; }   // e.g. "Dock must be next to water"
     if (!EconomySpend(PLAYER_TEAM, BUILDING_STATS[placingType].cost)) { UiShowMessage("Not enough gold"); return; }
 
     int site = BuildingPlace(placingType, PLAYER_TEAM, at, true);
@@ -505,7 +518,7 @@ void InputDraw(void)
     {
         Vector2 at = CamMouseWorld();
         Rectangle r = BuildingFootprint(placingType, at);
-        Color c = (BuildingCanPlace(placingType, at) && BuildingsCanBuild(PLAYER_TEAM, placingType)) ? GHOST_OK : GHOST_BLOCKED;
+        Color c = InputPlacementOK(placingType, at, NULL) ? GHOST_OK : GHOST_BLOCKED;
         DrawRectangleRec(r, Fade(c, 0.35f));
         DrawRectangleLinesEx(r, line, c);
         float range = BUILDING_STATS[placingType].range;

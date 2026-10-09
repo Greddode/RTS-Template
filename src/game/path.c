@@ -27,6 +27,8 @@
 #include "path.h"
 #include "map.h"
 #include "units.h"
+#include "raymath.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -394,4 +396,58 @@ int PathRegion(MoveClass moveClass, Vector2 worldPos)
     int tx = (int)(worldPos.x/TILE_SIZE), ty = (int)(worldPos.y/TILE_SIZE);
     if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return 0;
     return regionOf[moveClass][ty*MAP_W + tx];
+}
+
+// --- Reach ----------------------------------------------------------------------------
+static int RegionAtTile(MoveClass mc, int tx, int ty)
+{
+    if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return 0;
+    return regionOf[mc][ty*MAP_W + tx];
+}
+
+bool PathCanReach(MoveClass moveClass, Vector2 from, Rectangle target, float range)
+{
+    if (moveClass == MOVE_AIR) return true;
+    int region = PathRegion(moveClass, from);   // also fills the regions if they're stale
+    if (region == 0) return true;   // standing somewhere odd (regions not refreshed yet): don't judge
+    Vector2 mid = { target.x + target.width*0.5f, target.y + target.height*0.5f };
+    if (PathRegion(moveClass, mid) == region) return true;   // the usual case: same open area, one lookup
+
+    // Every tile near the target: the closest a unit's centre can get inside it
+    // (UNIT_RADIUS from its edges) must be within range of the target.
+    float reach = range + TILE_SIZE;
+    int x0 = (int)floorf((target.x - reach)/TILE_SIZE), x1 = (int)floorf((target.x + target.width + reach)/TILE_SIZE);
+    int y0 = (int)floorf((target.y - reach)/TILE_SIZE), y1 = (int)floorf((target.y + target.height + reach)/TILE_SIZE);
+    for (int ty = y0; ty <= y1; ty++)
+        for (int tx = x0; tx <= x1; tx++)
+        {
+            if (RegionAtTile(moveClass, tx, ty) != region) continue;
+            float lo = UNIT_RADIUS, hi = TILE_SIZE - UNIT_RADIUS;   // where a centre can stand in the tile
+            float sx = Clamp(mid.x, tx*TILE_SIZE + lo, tx*TILE_SIZE + hi), sy = Clamp(mid.y, ty*TILE_SIZE + lo, ty*TILE_SIZE + hi);
+            float dx = Clamp(sx, target.x, target.x + target.width) - sx, dy = Clamp(sy, target.y, target.y + target.height) - sy;
+            if (dx*dx + dy*dy <= range*range) return true;
+        }
+    return false;
+}
+
+bool PathNearestInRegion(MoveClass moveClass, int region, Vector2 near, Vector2 *out)
+{
+    PathRegion(moveClass, near);   // fills the regions if they're stale
+    int cx = (int)floorf(near.x/TILE_SIZE), cy = (int)floorf(near.y/TILE_SIZE);
+    for (int r = 0; r <= PATH_NEAREST_MAX_TILES; r++)
+    {
+        bool found = false;
+        float best = 0.0f;
+        for (int ty = cy - r; ty <= cy + r; ty++)
+            for (int tx = cx - r; tx <= cx + r; tx++)
+            {
+                if (abs(tx - cx) != r && abs(ty - cy) != r) continue;   // this ring's edge only
+                if (RegionAtTile(moveClass, tx, ty) != region) continue;
+                Vector2 p = { (tx + 0.5f)*TILE_SIZE, (ty + 0.5f)*TILE_SIZE };
+                float d = (p.x - near.x)*(p.x - near.x) + (p.y - near.y)*(p.y - near.y);
+                if (!found || d < best) { found = true; best = d; *out = p; }
+            }
+        if (found) return true;
+    }
+    return false;
 }

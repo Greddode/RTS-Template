@@ -10,10 +10,16 @@
 // it's placed are pushed to the nearest open spot. Destroying it unblocks
 // the tiles again.
 //
+// Placement: BuildingsPlacementOK() is the one rule (player, ghost, AI, map
+// files, editor): open ground under the whole footprint, and for `needsWater`
+// types (the Dock) a water tile within BUILDING_WATER_MARGIN of its edge.
+//
 // Production: each building has a queue of up to MAX_QUEUE units. The cost is
 // paid when queuing (and refunded if cancelled); the first unit trains for its
 // `trainTime`, then appears next to the building and the rest move up. A
 // building can only train unit types whose `trainedAt` is its type.
+// Naval units appear on the nearest free water tile next to it; with none
+// free, queuing is refused (nothing paid), and a finished one waits.
 //
 // Rally point: each building has one (default: the spot where its units
 // appear). A newly trained unit is given a move order to it.
@@ -32,7 +38,9 @@
 #include "fog.h"
 #include "grid.h"
 #include "map.h"
+#include "path.h"
 #include "sprites.h"
+#include "ui.h"
 #include "units.h"
 #include "raymath.h"
 #include <string.h>
@@ -124,7 +132,7 @@ bool BuildingIsAlive(int id, unsigned int serial)
 }
 
 // Scanning the building pool is fine: it's small (MAX_BUILDINGS), unlike units.
-int BuildingsFindNearestEnemy(Vector2 pos, float maxDist, int team)
+int BuildingsFindNearestEnemy(Vector2 pos, float maxDist, int team, MoveClass moveClass, float range)
 {
     int best = -1;
     float bestDist = maxDist;
@@ -135,7 +143,9 @@ int BuildingsFindNearestEnemy(Vector2 pos, float maxDist, int team)
         if (b->hp <= b->incomingDamage) continue;   // doomed: don't waste attacks
         if (!FogCanSeeRect(team, BuildingRect(i))) continue;   // hidden by fog
         float d = BuildingDistance(i, pos);
-        if (d <= bestDist) { bestDist = d; best = i; }
+        if (d > bestDist) continue;
+        if (d > range && !PathCanReach(moveClass, pos, BuildingRect(i), range)) continue;   // across the water, for a Melee
+        bestDist = d; best = i;
     }
     return best;
 }
@@ -166,7 +176,7 @@ bool BuildingsFindSpot(BuildingType type, Vector2 near, Vector2 *out)
             {
                 if (x != cx - r && x != cx + r && y != cy - r && y != cy + r) continue;   // ring edge only
                 Vector2 p = { (x + 0.5f)*TILE_SIZE, (y + 0.5f)*TILE_SIZE };
-                if (BuildingCanPlace(type, p)) { *out = p; return true; }
+                if (BuildingCanPlace(type, p, NULL)) { *out = p; return true; }
             }
         }
     }
@@ -185,6 +195,57 @@ static Vector2 SpawnSpot(int id, MoveClass moveClass)
     Vector2 spot = { r.x + r.width*0.5f, r.y + r.height + UNIT_RADIUS*2.0f };
     UnitsOpenSpots(moveClass, spot, 1, &spot);
     return spot;
+}
+
+// Naval units: the free water tile next to the building (within
+// BUILDING_WATER_MARGIN of its edge) nearest its centre. Free = water with no
+// building on it and no boat or ground unit standing in it. False if none.
+static bool FreeWaterSpot(int id, Vector2 *out)
+{
+    const Building *b = &buildings[id];
+    Vector2 centre = BuildingCentre(id);
+    int m = BUILDING_WATER_MARGIN;
+    bool found = false;
+    float best = 0.0f;
+    for (int y = b->ty - m; y < b->ty + b->size + m; y++)
+        for (int x = b->tx - m; x < b->tx + b->size + m; x++)
+        {
+            if (!MapTileWalkable(MOVE_NAVAL, x, y)) continue;
+            Vector2 p = { (x + 0.5f)*TILE_SIZE, (y + 0.5f)*TILE_SIZE };
+            float d = Vector2Distance(p, centre);
+            if (found && d >= best) continue;
+            int near[8];
+            int n = GridQuery((Rectangle){ x*TILE_SIZE - UNIT_RADIUS, y*TILE_SIZE - UNIT_RADIUS, TILE_SIZE + UNIT_RADIUS*2.0f, TILE_SIZE + UNIT_RADIUS*2.0f }, near, 8), taken = 0;
+            for (int k = 0; k < n; k++) taken += !UnitIsFlying(&units[near[k]]) && Vector2Distance(units[near[k]].pos, p) < TILE_SIZE*0.5f + units[near[k]].radius;
+            if (taken) continue;
+            found = true; best = d; *out = p;
+        }
+    return found;
+}
+
+bool BuildingHasSpawnRoom(int id, UnitType type)
+{
+    Vector2 unused;
+    return UNIT_STATS[type].moveClass != MOVE_NAVAL || FreeWaterSpot(id, &unused);
+}
+
+// Where a newly trained unit of this type appears. False: nowhere yet (naval, no free water).
+static bool UnitSpawnSpot(int id, UnitType type, Vector2 *out)
+{
+    if (UNIT_STATS[type].moveClass == MOVE_NAVAL) return FreeWaterSpot(id, out);
+    *out = SpawnSpot(id, UNIT_STATS[type].moveClass);
+    return true;
+}
+
+// The default rally point: where its units appear (on water for a Dock).
+static Vector2 DefaultRally(int id)
+{
+    for (int t = 0; t < UNIT_TYPE_COUNT; t++)
+    {
+        Vector2 spot;
+        if (UNIT_STATS[t].trainedAt == buildings[id].type && UNIT_STATS[t].moveClass == MOVE_NAVAL && FreeWaterSpot(id, &spot)) return spot;
+    }
+    return SpawnSpot(id, MOVE_GROUND);
 }
 
 // Units caught under a new building move to the nearest open spot.
@@ -233,31 +294,58 @@ bool BuildingsCanBuild(int team, BuildingType type)
     return false;
 }
 
-bool BuildingCanPlace(BuildingType type, Vector2 centre)
+bool BuildingsPlacementOK(BuildingType type, int tx, int ty, TileOpenFn tileOpen, const void *source, const char **why)
 {
-    int tx, ty, size = BUILDING_STATS[type].size;
-    FootprintTiles(type, centre, &tx, &ty);
+    const BuildingStats *s = &BUILDING_STATS[type];
+    const char *unused;
+    if (why == NULL) why = &unused;
 
-    // Every tile must be open ground with no other building on it...
-    for (int y = ty; y < ty + size; y++)
+    // Every tile must be open ground (no water, rock, lava or other building)...
+    for (int y = ty; y < ty + s->size; y++)
+        for (int x = tx; x < tx + s->size; x++)
+            if (!tileOpen(source, x, y, MOVE_GROUND)) { *why = "Can't build there"; return false; }
+
+    // ...and a Dock needs water touching it: any tile in the ring around the footprint.
+    if (s->needsWater)
     {
-        for (int x = tx; x < tx + size; x++)
-        {
-            if (!MapTileWalkable(MOVE_GROUND, x, y)) return false;
-        }
+        int m = BUILDING_WATER_MARGIN;
+        for (int y = ty - m; y < ty + s->size + m; y++)
+            for (int x = tx - m; x < tx + s->size + m; x++)
+                if (tileOpen(source, x, y, MOVE_NAVAL)) return true;
+        *why = TextFormat("%s must be next to water", s->name);
+        return false;
     }
-    // ...and it mustn't cover a gold node.
+    return true;
+}
+
+static bool LiveTileOpen(const void *source, int tx, int ty, MoveClass moveClass)
+{
+    (void)source;
+    return MapTileWalkable(moveClass, tx, ty);   // terrain plus the buildings already standing
+}
+
+bool BuildingCanPlace(BuildingType type, Vector2 centre, const char **why)
+{
+    int tx, ty;
+    FootprintTiles(type, centre, &tx, &ty);
+    if (!BuildingsPlacementOK(type, tx, ty, LiveTileOpen, NULL, why)) return false;
+
+    // In the game it also mustn't cover a gold node (the editor checks its own objects).
     Rectangle r = BuildingFootprint(type, centre);
     for (int i = 0; i < MAX_GOLD_NODES; i++)
     {
-        if (goldNodes[i].active && CheckCollisionPointRec(goldNodes[i].pos, r)) return false;
+        if (goldNodes[i].active && CheckCollisionPointRec(goldNodes[i].pos, r))
+        {
+            if (why) *why = "Can't build on gold";
+            return false;
+        }
     }
     return true;
 }
 
 int BuildingPlace(BuildingType type, int team, Vector2 centre, bool unfinished)
 {
-    if (!BuildingCanPlace(type, centre)) return -1;
+    if (!BuildingCanPlace(type, centre, NULL)) return -1;
     int tx, ty, size = BUILDING_STATS[type].size;
     FootprintTiles(type, centre, &tx, &ty);
 
@@ -276,7 +364,7 @@ int BuildingPlace(BuildingType type, int team, Vector2 centre, bool unfinished)
         };
         MapSetBlocked(tx, ty, size, size, true);
         PushUnitsOut(i);
-        buildings[i].rally = SpawnSpot(i, MOVE_GROUND);   // default rally: right where (ground) units appear
+        buildings[i].rally = DefaultRally(i);   // right where its units appear
         return i;
     }
     return -1;
@@ -296,6 +384,11 @@ bool BuildingQueueTrain(int id, UnitType type)
     if (!b->active || b->constructing || b->queueCount >= MAX_QUEUE) return false;
     if (UNIT_STATS[type].trainedAt != b->type) return false;
     if (!UnitsCanTrain(b->team, type)) return false;   // its `requires` building (player and AI alike)
+    if (!BuildingHasSpawnRoom(id, type))   // a Dock boxed in: refused before paying
+    {
+        if (b->team == PLAYER_TEAM) UiShowMessage(TextFormat("No free water next to the %s", BUILDING_STATS[b->type].name));
+        return false;
+    }
     if (!EconomySpend(b->team, UNIT_STATS[type].cost)) return false;
     b->queue[b->queueCount++] = type;
     return true;
@@ -387,9 +480,10 @@ void BuildingsTick(void)
 
         if (++b->trainTicks < (int)(UNIT_STATS[b->queue[0]].trainTime*TICK_RATE)) continue;
 
-        // Done: spawn just below the building, then head for the rally point.
-        // If the unit pool is full, wait.
-        Vector2 spot = SpawnSpot(i, UNIT_STATS[b->queue[0]].moveClass);
+        // Done: spawn just below the building (naval: on free water next to it),
+        // then head for the rally point. No free water or the unit pool is full: wait.
+        Vector2 spot;
+        if (!UnitSpawnSpot(i, b->queue[0], &spot)) continue;
         int unit = UnitSpawn(spot, b->queue[0], b->team);
         if (unit == -1) continue;
         if (Vector2Distance(spot, b->rally) > RALLY_MIN_DIST) UnitsOrderMove(&unit, 1, b->rally);

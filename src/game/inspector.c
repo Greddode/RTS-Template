@@ -350,6 +350,7 @@ static void DrawBuilding(Rectangle panel, int id)
         {
             if (!unlocked) UiShowMessage(TextFormat("Requires %s", BUILDING_STATS[u->requires].name));
             else if (b->queueCount >= MAX_QUEUE) UiShowMessage("Queue full");
+            else if (!BuildingHasSpawnRoom(id, (UnitType)t)) BuildingQueueTrain(id, (UnitType)t);   // refused, with its own message (nothing paid)
             else if (!BuildingQueueTrain(id, (UnitType)t)) UiShowMessage("Not enough gold");
         }
     }

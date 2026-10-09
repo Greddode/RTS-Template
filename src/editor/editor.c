@@ -12,9 +12,10 @@
 //                  size places an NxN block, one unit per tile (click or drag)
 //   gold           with an amount field
 //   erase          removes the object under the cursor
-// Objects can only go where a map file allows them (MapDocObjectFits), and
-// painting skips tiles whose object couldn't stand on the new tile (water
-// under a Base), so the map stays valid. The
+// Objects can only go where a map file allows them (MapDocObjectFits; for
+// buildings that's the game's own rule, BuildingsPlacementOK), and painting
+// skips tiles whose object couldn't stand on the new tile (water under a
+// Base) or that would leave a Dock without water, so the map stays valid. The
 // unit brush skips tiles that don't allow a unit (water, rock, taken), and its
 // ghost shows every tile: green = a unit goes there, red = skipped.
 //
@@ -213,6 +214,14 @@ static void PopUndo(void)
 
 // --- Editing the map -------------------------------------------------------------------
 
+// Every needsWater building (a Dock) still touches water (BuildingsPlacementOK, via the document).
+static bool WaterBuildingsStillFit(void)
+{
+    for (int i = 0; i < doc.objectCount; i++)
+        if (doc.objects[i].kind == MAPOBJ_BUILDING && BUILDING_STATS[doc.objects[i].type].needsWater && !MapDocObjectFits(&doc, &doc.objects[i], i)) return false;
+    return true;
+}
+
 static void PaintTiles(int cx, int cy)
 {
     int half = BRUSH_SIZES[brushIndex]/2;
@@ -223,7 +232,9 @@ static void PaintTiles(int cx, int cy)
             if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) continue;
             int o = ObjectAt(x, y);   // never paint a tile the object on it can't stand on (water under a Base...)
             if (o != -1 && !TileAllows((TileType)toolType, MapObjectClass(&doc.objects[o]))) continue;
+            unsigned char old = doc.tiles[y*doc.width + x];
             doc.tiles[y*doc.width + x] = (unsigned char)toolType;
+            if (!WaterBuildingsStillFit()) doc.tiles[y*doc.width + x] = old;   // ...or take the last water from a Dock
         }
     }
     tilesDirty = true;
@@ -312,7 +323,7 @@ static void WorldInput(void)
         MapObject o = ToolObject(x, y);
         if (o.kind == MAPOBJ_GOLD && (o.amount <= 0 || o.amount > 1000000)) UiShowMessage("Gold amount must be 1..1000000");
         else if (doc.objectCount >= MAP_MAX_OBJECTS) UiShowMessage("Too many objects");
-        else if (!MapDocObjectFits(&doc, &o, -1)) UiShowMessage("Doesn't fit there");
+        else if (!MapDocObjectFits(&doc, &o, -1)) UiShowMessage(MapDocObjectProblem(&doc, &o, -1));   // e.g. "Dock must be next to water"
         else doc.objects[doc.objectCount++] = o;
     }
 }

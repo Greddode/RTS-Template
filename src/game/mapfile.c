@@ -81,8 +81,10 @@ static int TileFromChar(char c)
     return -1;
 }
 
-static bool DocTileOpen(const MapDoc *doc, int x, int y, MoveClass moveClass)
+// Could a unit of this class be on tile x,y of the document? (A TileOpenFn, for BuildingsPlacementOK.)
+static bool DocTileOpen(const void *source, int x, int y, MoveClass moveClass)
 {
+    const MapDoc *doc = source;
     if (x < 0 || y < 0 || x >= doc->width || y >= doc->height) return false;
     return TileAllows((TileType)doc->tiles[y*doc->width + x], moveClass);
 }
@@ -103,17 +105,24 @@ static bool Overlap(const MapObject *a, const MapObject *b)
     return a->x < b->x + sb && b->x < a->x + sa && a->y < b->y + sb && b->y < a->y + sa;
 }
 
-bool MapDocObjectFits(const MapDoc *doc, const MapObject *o, int ignoreIndex)
+const char *MapDocObjectProblem(const MapDoc *doc, const MapObject *o, int ignoreIndex)
 {
+    const char *why = NULL;
+    if (o->kind == MAPOBJ_BUILDING && !BuildingsPlacementOK((BuildingType)o->type, o->x, o->y, DocTileOpen, doc, &why)) return why;   // the game's own rule
     int size = ObjectSize(o);
     for (int y = o->y; y < o->y + size; y++)
         for (int x = o->x; x < o->x + size; x++)
-            if (!DocTileOpen(doc, x, y, MapObjectClass(o))) return false;
+            if (!DocTileOpen(doc, x, y, MapObjectClass(o))) return "Doesn't fit there";
     for (int i = 0; i < doc->objectCount; i++)
     {
-        if (i != ignoreIndex && Overlap(o, &doc->objects[i])) return false;
+        if (i != ignoreIndex && Overlap(o, &doc->objects[i])) return "Doesn't fit there";
     }
-    return true;
+    return NULL;
+}
+
+bool MapDocObjectFits(const MapDoc *doc, const MapObject *o, int ignoreIndex)
+{
+    return MapDocObjectProblem(doc, o, ignoreIndex) == NULL;
 }
 
 static const char *ObjectName(const MapObject *o)
@@ -176,6 +185,9 @@ static bool ParseObject(const char *path, int lineNo, const char *line, MapDoc *
             if (!DocTileOpen(doc, x, y, MapObjectClass(o)))
                 return Fail(path, lineNo, (size > 1) ? "%s at %d,%d covers a tile it can't stand on (water, rock, lava) or the map edge"
                                                      : "%s at %d,%d is on a tile it can't stand on (TILE_INFO in map.c)", word, o->x, o->y);
+    const char *why;
+    if (o->kind == MAPOBJ_BUILDING && !BuildingsPlacementOK((BuildingType)o->type, o->x, o->y, DocTileOpen, doc, &why))
+        return Fail(path, lineNo, "%s at %d,%d: %s", word, o->x, o->y, why);   // e.g. a Dock away from water
 
     for (int i = 0; i < doc->objectCount; i++)
     {

@@ -107,12 +107,6 @@ const char *AiFerryStatus(void) { return status; }
 
 static int Region(Vector2 p) { return PathRegion(MOVE_GROUND, p); }
 
-bool AiFerryCanReach(Vector2 from, Vector2 to)
-{
-    int a = Region(from), b = Region(to);
-    return a != 0 && a == b;
-}
-
 bool AiFerryOwns(int unit)
 {
     for (int k = 0; k < ferryCount; k++) if (ferries[k].ship == unit && UnitIsAlive(unit, ferries[k].serial)) return true;

@@ -47,6 +47,7 @@ test:
 	./tests/build/controls_overflow_test
 	./tests/build/controls_overflow_test_longnames
 	./tests/build/tile_class_test
+	./tests/build/naval_test tests/build
 
 clean:
 	rm -rf build build-web dist tests/build

@@ -119,6 +119,7 @@ void UnitsOrderAttackMove(const int *ids, int count, Vector2 dest);   // move, b
 void UnitsOrderStop(const int *ids, int count);   // drop all orders and go idle
 void UnitsOrderHold(const int *ids, int count);   // stop, then stay put: attack only what's in range
 int  UnitsOpenSpots(MoveClass moveClass, Vector2 centre, int count, Vector2 *out);  // free spots (for that class) around centre, closest first
+int  UnitsOpenSpotsIn(MoveClass moveClass, int region, Vector2 centre, int count, Vector2 *out);  // same, only in that region (PathRegion; 0 = any)
 
 // Movement helpers used by combat.c
 void    UnitMoveTo(int id, Vector2 dest);       // queue a (budgeted) path to dest

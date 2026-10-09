@@ -37,6 +37,13 @@
 // keeps or damages a target asks it, so a Knight never targets, chases or
 // hurts a Falcon, and an Airship's bombs pass through flyers.
 //
+// Reach (CombatCanEngage, PathCanReach in path.c): a unit only picks, keeps
+// or chases a target it can hit from where it stands or can get within range
+// of through its own region. A Melee never chases a boat at sea (an Archer
+// on the shore still shoots one in range), and a boat never chases a unit
+// inland. If a target becomes unreachable mid-chase it's dropped; an order
+// to attack one becomes a move to the nearest spot the unit can get to.
+//
 // Damage: CombatDamage() turns a hit's base damage into what the target
 // actually loses, using its armor (the damage/armor table in config.h). It
 // runs once, when the attack happens: melee damage lands at once, and a
@@ -80,6 +87,7 @@
 #include "fog.h"
 #include "grid.h"
 #include "map.h"
+#include "path.h"
 #include "units.h"
 #include "raymath.h"
 #include <string.h>
@@ -161,6 +169,19 @@ static float TargetDistance(bool isBuilding, int id, Vector2 from)
     return isBuilding ? BuildingDistance(id, from) : Vector2Distance(from, units[id].pos);
 }
 
+static Rectangle TargetArea(bool isBuilding, int id)
+{
+    return isBuilding ? BuildingRect(id) : (Rectangle){ units[id].pos.x, units[id].pos.y, 0.0f, 0.0f };
+}
+
+bool CombatCanEngage(int unit, bool isBuilding, int target)
+{
+    const Unit *u = &units[unit];
+    float range = UNIT_STATS[u->type].range;
+    if (TargetDistance(isBuilding, target, u->pos) <= range) return true;   // can hit it from here
+    return PathCanReach(UnitMoveClass(u), u->pos, TargetArea(isBuilding, target), range);
+}
+
 static void DealDamage(bool isBuilding, int target, float damage)
 {
     if (isBuilding)
@@ -222,6 +243,7 @@ static int FindTarget(const Unit *u, float maxDist)
         float d = Vector2Distance(u->pos, t->pos);
         if (d > maxDist || d < minRange || (best != -1 && d >= bestDist)) continue;
         if (FriendsInSplash(u, t->pos)) continue;
+        if (!CombatCanEngage((int)(u - units), false, near[k])) continue;   // out of range and out of reach
         best = near[k];
         bestDist = d;
     }
@@ -254,8 +276,9 @@ static bool AttackNearest(int id, float radius)
     bool leashed = u->leashed;
     Vector2 home = u->leashHome;
     bool picky = Picky(u);
-    int enemy = picky ? FindTarget(u, radius) : GridFindNearestEnemy(u->pos, radius, u->team, UNIT_STATS[u->type].hitsGround, UNIT_STATS[u->type].hitsAir);
-    int building = (enemy == -1 && UnitCanHitBuildings(u->type)) ? BuildingsFindNearestEnemy(u->pos, radius, u->team) : -1;
+    const UnitStats *s = &UNIT_STATS[u->type];
+    int enemy = picky ? FindTarget(u, radius) : GridFindNearestEnemy(u->pos, radius, u->team, s->hitsGround, s->hitsAir, UnitMoveClass(u), s->range);
+    int building = (enemy == -1 && UnitCanHitBuildings(u->type)) ? BuildingsFindNearestEnemy(u->pos, radius, u->team, UnitMoveClass(u), s->range) : -1;
     if (building != -1 && picky && (BuildingDistance(building, u->pos) < UNIT_STATS[u->type].minRange ||
                                     FriendsInSplash(u, LandingPoint(true, building, u->pos)))) building = -1;
     if (enemy != -1) UnitsOrderAttack(&id, 1, enemy);
@@ -441,6 +464,14 @@ Vector2 CombatUnitTick(int id)
     if (--u->chaseTicks <= 0)
     {
         u->chaseTicks = CHASE_RETHINK_TICKS;
+        if (!CombatCanEngage(id, isBuilding, target))   // e.g. a boat out at sea, for a Melee: never chase it
+        {
+            u->attacking = false;
+            if (u->attackMove) UnitMoveTo(id, u->attackMoveDest);
+            else if (u->leashed) { u->leashed = false; UnitMoveTo(id, u->leashHome); }
+            else UnitsOrderMove(&id, 1, isBuilding ? BuildingCentre(target) : units[target].pos);   // an order: as close as it can get (the shore), then idle
+            return none;
+        }
         u->chaseDirect = MapLineClear(UnitMoveClass(u), u->pos, goal, u->radius);
         if (u->chaseDirect)
         {
@@ -489,7 +520,7 @@ void CombatBuildingTick(int id)
         keep = FogCanSee(b->team, t->pos) && t->hp > t->incomingDamage && Vector2Distance(from, t->pos) <= s->range &&
                (UnitIsFlying(t) ? s->hitsAir : s->hitsGround);
     }
-    if (!keep) target = GridFindNearestEnemy(from, s->range, b->team, s->hitsGround, s->hitsAir);   // fog, doomed, can-hit: all checked there
+    if (!keep) target = GridFindNearestEnemy(from, s->range, b->team, s->hitsGround, s->hitsAir, MOVE_GROUND, s->range);   // fog, doomed, can-hit: all checked there (everything found is in range)
     if (target == -1) { b->targetSerial = 0; b->cooldownTicks = COMBAT_ACQUIRE_TICKS - 1; return; }   // nothing in range: look again shortly
     b->target = target;
     b->targetSerial = units[target].serial;

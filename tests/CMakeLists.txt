@@ -62,3 +62,12 @@ target_include_directories(tile_class_test PRIVATE ${REPO}/src ${REPO}/src/game)
 target_compile_options(tile_class_test PRIVATE -Wall -Wextra)
 set_target_properties(tile_class_test PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_link_libraries(tile_class_test PRIVATE raylib m)
+
+# naval_test: the Dock, boats and ships, reach, map keywords and the editor (no window needed).
+# It #includes src/editor/editor.c to use the editor's own tool code.
+add_executable(naval_test naval_test.c text_hooks_passthrough.c ${TILE_TEST_SOURCES})
+target_include_directories(naval_test PRIVATE ${REPO}/src ${REPO}/src/game ${REPO}/src/editor)
+target_compile_options(naval_test PRIVATE -Wall -Wextra)
+target_compile_definitions(naval_test PRIVATE MAPS_DIR="${REPO}/maps")
+set_target_properties(naval_test PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+target_link_libraries(naval_test PRIVATE raylib m)

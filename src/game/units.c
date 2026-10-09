@@ -35,8 +35,16 @@
 // units walk underneath). They're drawn after the ground units, each with a
 // small shadow on the ground, in their own passes (so still one batch each).
 //
+// Naval units (MOVE_NAVAL) sail on water only and are drawn with the ground
+// units, with a short fading wake behind them while they move.
+//
+// Move orders go to open spots in the unit's own region (PathRegion): a boat
+// ordered onto land goes to the nearest water it can sail to, a ground unit
+// ordered into a lake to the nearest shore it can walk to.
+//
 // Targets: an attack order on something a unit can't hit (UnitCanHitUnit:
-// hitsAir / hitsGround) becomes a plain move to it for that unit.
+// hitsAir / hitsGround) becomes a plain move to it for that unit. One it can
+// hit but never reach (PathCanReach, combat.c) is walked toward the same way.
 //
 // Stop drops every order (the unit is idle, so it still auto-attacks).
 // Hold is stop plus `holdPosition`: combat.c then only lets it target enemies
@@ -70,6 +78,11 @@
 #define WORKER_MARK_COLOR   (Color){ 235, 235, 225, 255 } // workers get a light square
 #define FALCON_MARK_COLOR   (Color){ 245, 245, 240, 255 } // falcons get white swept-back wings
 #define AIRSHIP_MARK_COLOR  (Color){ 60, 55, 50, 255 }    // airships get a dark gondola bar
+#define BOAT_MARK_COLOR     (Color){ 245, 245, 240, 255 } // boats get a light pointed hull
+#define SHIP_MARK_COLOR     (Color){ 60, 55, 50, 255 }    // ships get a dark hull and a light sail
+#define WAKE_DOTS           4                             // naval units: fading dots behind a moving one...
+#define WAKE_SPACING        4.0f                          // ...this far apart (world px)
+#define WAKE_COLOR          (Color){ 220, 235, 255, 150 }
 #define UNIT_SELECTED_COLOR (Color){ 60, 255, 90, 255 }
 #define HEALTH_BAR_W        14.0f
 #define HEALTH_BAR_H        3.0f
@@ -299,7 +312,8 @@ void UnitsTick(void)
 
 // Body in team colour plus a type mark: archer = dark dot, worker = light
 // square, knight = dark ring, medic = white cross, mage = violet diamond,
-// scout = white arrowhead, falcon = white wings, airship = dark gondola bar.
+// scout = white arrowhead, falcon = white wings, airship = dark gondola bar,
+// boat = light pointed hull, ship = dark hull with a light sail.
 // With art for the type (sprites.c), the art tinted in team colour instead.
 void UnitsDrawIcon(UnitType type, int team, Vector2 p, float radius)
 {
@@ -328,6 +342,27 @@ void UnitsDrawIcon(UnitType type, int team, Vector2 p, float radius)
         DrawTriangle((Vector2){ p.x + radius*0.5f, p.y }, (Vector2){ p.x - radius*0.2f, p.y }, (Vector2){ p.x - radius*0.5f, p.y + radius*0.9f }, FALCON_MARK_COLOR);
     }
     if (type == UNIT_AIRSHIP) DrawRectangleRec((Rectangle){ p.x - radius*0.7f, p.y + radius*0.1f, radius*1.4f, radius*0.45f }, AIRSHIP_MARK_COLOR);
+    if (type == UNIT_BOAT)   // hull pointing right (counter-clockwise points)
+        DrawTriangle((Vector2){ p.x + radius*0.8f, p.y }, (Vector2){ p.x - radius*0.6f, p.y - radius*0.35f }, (Vector2){ p.x - radius*0.6f, p.y + radius*0.35f }, BOAT_MARK_COLOR);
+    if (type == UNIT_SHIP)
+    {
+        DrawRectangleRec((Rectangle){ p.x - radius*0.75f, p.y + radius*0.1f, radius*1.5f, radius*0.45f }, SHIP_MARK_COLOR);
+        DrawRectangleRec((Rectangle){ p.x - radius*0.25f, p.y - radius*0.6f, radius*0.5f, radius*0.6f }, BOAT_MARK_COLOR);
+    }
+}
+
+// A moving naval unit's wake: a few dots trailing behind, fading out (shapes, so they batch with pass 1).
+static void DrawWake(const Unit *u, Vector2 p)
+{
+    Vector2 step = Vector2Subtract(u->pos, u->prevPos);
+    float len = Vector2Length(step);
+    if (len < 0.01f) return;   // not moving this tick
+    Vector2 back = Vector2Scale(step, -1.0f/len);
+    for (int k = 1; k <= WAKE_DOTS; k++)
+    {
+        Vector2 d = Vector2Add(p, Vector2Scale(back, u->radius + k*WAKE_SPACING));
+        DrawCircleSector(d, 1.8f - k*0.25f, 0.0f, 360.0f, 6, Fade(WAKE_COLOR, 1.0f - (float)k/(WAKE_DOTS + 1)));
+    }
 }
 
 // Carried gold and the health bar (only once the unit has taken damage).
@@ -348,7 +383,8 @@ static void DrawUnitOverlays(const Unit *u, Vector2 p)
 // Three passes, so raylib can batch. Shapes use raylib's built-in white
 // texture and art uses the atlas; every switch between the two ends a batch
 // (one more draw call). So: (1) shapes underneath (selection circles, plus
-// units without art drawn complete, exactly as before sprites existed),
+// units without art drawn complete, exactly as before sprites existed, and
+// naval units' wakes),
 // (2) every sprite in a row, all from the one atlas, (3) the overlays of the
 // units with art on top. Ground units get these three passes first, then
 // flyers get the same three on top; a flyer's first pass also draws its
@@ -362,6 +398,7 @@ static void DrawLayer(const int *visible, const Vector2 *drawPos, int count, boo
         if (UnitIsFlying(u) != flyers) continue;
         Vector2 p = drawPos[k];
         if (flyers) DrawEllipse((int)(p.x + SHADOW_OFFSET.x), (int)(p.y + SHADOW_OFFSET.y), u->radius*0.9f, u->radius*0.45f, SHADOW_COLOR);
+        if (UnitMoveClass(u) == MOVE_NAVAL) DrawWake(u, p);
         if (u->selected) DrawCircleSector(p, u->radius + 2.0f, 0.0f, 360.0f, UNIT_DRAW_SEGMENTS, UNIT_SELECTED_COLOR);
         if (!SpritesHaveUnit(u->type))
         {
@@ -419,6 +456,11 @@ void UnitsDraw(Rectangle view, float alpha)
 // fights over one point. Returns how many spots were found.
 int UnitsOpenSpots(MoveClass moveClass, Vector2 dest, int count, Vector2 *spots)
 {
+    return UnitsOpenSpotsIn(moveClass, 0, dest, count, spots);
+}
+
+int UnitsOpenSpotsIn(MoveClass moveClass, int region, Vector2 dest, int count, Vector2 *spots)
+{
     int found = 0;
     for (int ring = 0; ring <= FORMATION_MAX_RINGS && found < count; ring++)
     {
@@ -428,7 +470,9 @@ int UnitsOpenSpots(MoveClass moveClass, Vector2 dest, int count, Vector2 *spots)
             {
                 if (abs(gx) != ring && abs(gy) != ring) continue;   // only this ring's edge
                 Vector2 p = { dest.x + gx*FORMATION_SPACING, dest.y + gy*FORMATION_SPACING };
-                if (MapCircleWalkable(moveClass, p, UNIT_RADIUS)) spots[found++] = p;
+                if (!MapCircleWalkable(moveClass, p, UNIT_RADIUS)) continue;
+                if (region != 0 && PathRegion(moveClass, p) != region) continue;   // another lake / island
+                spots[found++] = p;
             }
         }
     }
@@ -471,7 +515,16 @@ static void OrderMoveGroup(const int *ids, int count, Vector2 dest, MoveClass mo
     static int spotOrder[MAX_UNITS], unitOrder[MAX_UNITS];
     if (count <= 0) return;
 
-    int found = UnitsOpenSpots(moveClass, dest, count, spots);
+    // Spots in the region the group is in (the first unit's), so nobody is sent
+    // somewhere it can't get to. Far from it: around its nearest tile to dest.
+    int region = (moveClass == MOVE_AIR) ? 0 : PathRegion(moveClass, units[ids[0]].pos);
+    int found = UnitsOpenSpotsIn(moveClass, region, dest, count, spots);
+    Vector2 nearest;
+    if (found == 0 && region != 0 && PathNearestInRegion(moveClass, region, dest, &nearest))
+    {
+        dest = nearest;
+        found = UnitsOpenSpotsIn(moveClass, region, dest, count, spots);
+    }
 
     // Move direction: from the group's centre toward the destination.
     Vector2 centre = { 0 };

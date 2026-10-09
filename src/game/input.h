@@ -21,5 +21,6 @@ int  InputSelectedNode(void);                // or -1
 void InputTogglePlacement(BuildingType type);   // Build button: start placing, or cancel if already placing it
 void InputMoveSelectedTo(Vector2 worldPos);       // move order for the selected units (the minimap's right click)
 bool InputIsPlacing(BuildingType type);
+bool InputPlacementOK(BuildingType type, Vector2 at, const char **why);   // the placement ghost is green exactly when this is true (and a click would place it)
 
 #endif

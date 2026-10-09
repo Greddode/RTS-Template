@@ -100,8 +100,8 @@ static char barracksNote[64], techNote[64], workerNote[64], expandNote[96];
 // the same things get the same target, whatever their type.
 static Vector2      cellFrom[GRID_W*GRID_H];
 static unsigned int cellStamp[GRID_W*GRID_H];
-static int          cellTarget[4][GRID_W*GRID_H];      // [hitsGround + 2*hitsAir]
-static unsigned int cellTargetStamp[4][GRID_W*GRID_H];
+static int          cellTarget[UNIT_TYPE_COUNT][GRID_W*GRID_H];   // per unit type: what it can hit and reach differs
+static unsigned int cellTargetStamp[UNIT_TYPE_COUNT][GRID_W*GRID_H];
 static unsigned int thinkStamp = 0;
 
 static void Note(char *note, int size, const char *fmt, ...)
@@ -337,6 +337,8 @@ static void TechTick(void)
             return;
         }
         if (freeWorker == -1 || !BuildingsCanBuild(AI_TEAM, type)) return;
+        Vector2 spot;
+        if (BUILDING_STATS[type].needsWater && !BuildingsFindSpot(type, BuildingCentre(anchor), &spot)) continue;   // no shore near its base: skip it, don't save for it
 
         int cost = BUILDING_STATS[type].cost;
         if (EconomyGold(AI_TEAM) < cost)
@@ -479,7 +481,7 @@ static bool FieldWorthIt(int seed, GoldField *f)
     int r = PathRegion(MOVE_GROUND, goldNodes[seed].pos);
     if (!NodeFree(seed) || (fieldRegion ? r != fieldRegion : (r == 0 || r == homeRegion))) return false;
     FieldAround(seed, f);
-    return f->gold >= AI_EXPAND_MIN_GOLD && BuildingsFindNearestEnemy(f->centre, AI_EXPAND_ENEMY_TILES*TILE_SIZE, AI_TEAM) == -1;
+    return f->gold >= AI_EXPAND_MIN_GOLD && BuildingsFindNearestEnemy(f->centre, AI_EXPAND_ENEMY_TILES*TILE_SIZE, AI_TEAM, MOVE_AIR, 0.0f) == -1;   // any enemy building near (MOVE_AIR: reachable or not)
 }
 
 // The nearest field worth a Base. Each node gives a field (it and its
@@ -522,7 +524,7 @@ static bool FieldBaseSpot(const GoldField *f, Vector2 *out)
         for (int tx = cx - r; tx <= cx + r; tx++)
         {
             Vector2 p = { (tx + 0.5f)*TILE_SIZE, (ty + 0.5f)*TILE_SIZE };
-            if (!BuildingCanPlace(BUILDING_BASE, p) || PathRegion(MOVE_GROUND, p) != region) continue;
+            if (!BuildingCanPlace(BUILDING_BASE, p, NULL) || PathRegion(MOVE_GROUND, p) != region) continue;
             Rectangle rect = BuildingFootprint(BUILDING_BASE, p);
             bool tooClose = false;
             for (int n = 0; n < MAX_GOLD_NODES && !tooClose; n++)
@@ -743,8 +745,10 @@ static void TrainTick(void)
     }
 }
 
-// Nearest player unit a unit of `type` can hit (cached per grid cell per think).
-// Healers can't hit anything; they follow the army to any enemy (as an attack-move).
+// Nearest player unit a unit of `type` can hit and reach (cached per grid cell per think).
+// Healers can't hit anything; they follow the army to any enemy they can walk to (as an attack-move).
+static float AttackReach(UnitType type) { return UNIT_STATS[type].damage <= 0.0f ? TILE_SIZE : UNIT_STATS[type].range; }
+
 static int NearestPlayerUnit(Vector2 from, UnitType type)
 {
     bool healer = UNIT_STATS[type].damage <= 0.0f;
@@ -757,13 +761,12 @@ static int NearestPlayerUnit(Vector2 from, UnitType type)
     int cell = cy*GRID_W + cx;
 
     if (cellStamp[cell] != thinkStamp) { cellStamp[cell] = thinkStamp; cellFrom[cell] = from; }
-    int hits = (ground ? 1 : 0) + (air ? 2 : 0);
-    if (cellTargetStamp[hits][cell] != thinkStamp)
+    if (cellTargetStamp[type][cell] != thinkStamp)
     {
-        cellTargetStamp[hits][cell] = thinkStamp;
-        cellTarget[hits][cell] = GridFindNearestEnemy(cellFrom[cell], (float)(MAP_PIXEL_W + MAP_PIXEL_H), AI_TEAM, ground, air);
+        cellTargetStamp[type][cell] = thinkStamp;
+        cellTarget[type][cell] = GridFindNearestEnemy(cellFrom[cell], (float)(MAP_PIXEL_W + MAP_PIXEL_H), AI_TEAM, ground, air, UNIT_STATS[type].moveClass, AttackReach(type));
     }
-    return cellTarget[hits][cell];
+    return cellTarget[type][cell];
 }
 
 // --- 4. Idle workers ---------------------------------------------------------------------
@@ -884,15 +887,11 @@ void AiTick(void)
             continue;
         }
 
-        int target = NearestPlayerUnit(u->pos, u->type);   // only ones it can hit (no Knights sent after Falcons)
+        // Only ones it can hit (no Knights sent after Falcons) and reach (no Melee sent after boats at sea).
+        int target = NearestPlayerUnit(u->pos, u->type);
         bool hitsBuildings = UnitCanHitBuildings(u->type) || UNIT_STATS[u->type].damage <= 0.0f;   // healers go along anyway
-        int building = (target == -1 && hitsBuildings) ? BuildingsFindNearestEnemy(u->pos, (float)(MAP_PIXEL_W + MAP_PIXEL_H), AI_TEAM) : -1;
-        if (AiFerryNeedsTransport())   // across the water: only send it where it can walk; the rest waits for an Airship
-        {
-            if (target != -1 && !AiFerryCanReach(u->pos, units[target].pos)) target = -1;
-            if (target == -1 && building != -1 && !AiFerryCanReach(u->pos, BuildingApproachPoint(building, u->pos, u->radius, MOVE_GROUND))) building = -1;
-            if (target == -1 && building == -1) continue;
-        }
+        int building = (target == -1 && hitsBuildings) ? BuildingsFindNearestEnemy(u->pos, (float)(MAP_PIXEL_W + MAP_PIXEL_H), AI_TEAM, UnitMoveClass(u), AttackReach(u->type)) : -1;
+        if (target == -1 && building == -1 && AiFerryNeedsTransport()) continue;   // across the water: it waits for an Airship
         if (target != -1) UnitsOrderAttack(&i, 1, target);
         else if (building != -1) UnitsOrderAttackBuilding(&i, 1, building);
         else toBase[toBaseCount++] = i;

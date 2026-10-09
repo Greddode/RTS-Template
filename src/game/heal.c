@@ -24,6 +24,7 @@
 #include "fog.h"
 #include "grid.h"
 #include "map.h"
+#include "path.h"
 #include "units.h"
 #include "raymath.h"
 
@@ -62,7 +63,16 @@ static float SearchRadius(const Unit *u)
     return u->holdPosition ? UNIT_STATS[u->type].healRange : HEAL_SEARCH_RADIUS;
 }
 
-// Nearest damaged ally within `radius`, preferring one nobody else is healing.
+// In heal range already, or able to walk there (PathCanReach, the same rule as combat).
+static bool CanReachPatient(int hid, int id)
+{
+    const Unit *h = &units[hid];
+    float range = UNIT_STATS[h->type].healRange;
+    if (Vector2Distance(h->pos, units[id].pos) <= range) return true;
+    return PathCanReach(UnitMoveClass(h), h->pos, (Rectangle){ units[id].pos.x, units[id].pos.y, 0.0f, 0.0f }, range);
+}
+
+// Nearest damaged ally within `radius` that it can reach, preferring one nobody else is healing.
 static int FindPatient(int hid, float radius)
 {
     static int near[MAX_UNITS];
@@ -78,6 +88,7 @@ static int FindPatient(int hid, float radius)
         if (!ValidPatient(hid, id)) continue;
         float d = Vector2Distance(h->pos, units[id].pos);
         if (d > radius) continue;
+        if (!CanReachPatient(hid, id)) continue;   // a hurt boat out at sea, for a Medic
         if (BeingHealed(id)) { if (shared == -1 || d < sharedDist) { shared = id; sharedDist = d; } }
         else if (best == -1 || d < bestDist) { best = id; bestDist = d; }
     }
@@ -176,6 +187,7 @@ Vector2 HealUnitTick(int id)
     if (--u->chaseTicks <= 0)
     {
         u->chaseTicks = HEAL_CHASE_RETHINK_TICKS;
+        if (!CanReachPatient(id, t)) { StopHealing(id); return none; }   // sailed off where it can't follow
         u->chaseDirect = MapLineClear(UnitMoveClass(u), u->pos, goal, u->radius);
         if (u->chaseDirect) { if (u->moving) UnitStop(id); }
         else if (!u->moving || Vector2Distance(u->target, goal) > TILE_SIZE) UnitMoveTo(id, goal);
