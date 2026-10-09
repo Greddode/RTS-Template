@@ -1,3 +1,3 @@
 # Headless AI vs AI result (both sides run the AI, unlimited path budget). Tier 2 compares against this.
-REGIONS Dire Straight (64x64)       1150fa0b1ea20651
-RESULT Dire Straight (64x64)        ticks  13560 (7:32)  player side won  units  67/  0 buildings  7/ 0 gold   179/    5  hash 7121d41abd1a7db6
+REGIONS Dire Straight (64x64)       d0e0c6f13bc84832
+RESULT Dire Straight (64x64)        ticks  12180 (6:46)  player side won  units  73/  0 buildings 10/ 0 gold   146/   42  hash e5f8ae5cc3665f5d

@@ -7,9 +7,11 @@
 //      AI_EXTRA_BARRACKS_GOLD while every Barracks has a full queue, it builds
 //      another, up to AI_MAX_BARRACKS.
 //   1b. Tech: once a Barracks is finished, it builds one of each building
-//      in AI_TECH_ORDER (Archery Range, then Academy), each after the one
-//      before is finished, rebuilt if destroyed. Combat training waits while
-//      it saves up for the next one. Ones a map file gave it are used too.
+//      in AI_TECH_ORDER (Archery Range, Academy, Air Factory, then Guard
+//      Towers by its main base), each after the one before is finished,
+//      rebuilt if destroyed. Combat training waits while it saves up for the
+//      next one; one that doesn't fit near its base is skipped instead. Ones
+//      a map file gave it are used too.
 //   2. Workers: each finished drop-off base wants AI_WORKERS_PER_NODE workers
 //      per reachable gold node near it (at most AI_MAX_WORKERS_PER_BASE). The
 //      base that's furthest below its target trains one, if the AI can pay.
@@ -43,9 +45,9 @@
 // Air defence: while it sees fewer than AI_ANTI_AIR_PER_FLYER units that can
 // hit air (alive + queued) per player flyer, it only trains types with
 // hitsAir, even while saving for a building (and keeps its gold for them while
-// their buildings are busy; with no such building it trains the normal mix). It never trains flyers itself
-// (they aren't in AI_ARMY_MIX), and idle units are only sent after player
-// units they can hit.
+// their buildings are busy; with no such building it trains the normal mix).
+// Its only flyers are the Falcons in AI_ARMY_MIX (and the ferry's Airships),
+// and idle units are only sent after player units they can hit.
 //
 // "Reachable" uses PathRegion(): a flood fill of the walkable tiles, redone
 // every think, so it answers "could pathfinding get there?" instantly.
@@ -292,19 +294,32 @@ static bool HaveFinishedBarracks(void)
     return false;
 }
 
-// One of our buildings of this type (a finished one if there is one), or -1.
-static int FindOwn(BuildingType type)
+// Is building b already tracked by an AI_TECH_ORDER row other than `row`?
+static bool TechClaimed(int b, int row)
+{
+    for (int k = 0; k < AI_TECH_COUNT; k++)
+        if (k != row && techSlot[k] == b && BuildingIsAlive(techSlot[k], techSerial[k])) return true;
+    return false;
+}
+
+// One of our buildings of this type (a finished one if there is one) that no other
+// tech row tracks, or -1. Row -1: any. This is what makes a type listed twice mean two.
+static int FindOwnTech(BuildingType type, int row)
 {
     int found = -1;
     for (int b = 0; b < MAX_BUILDINGS; b++)
     {
         const Building *bd = &buildings[b];
         if (!bd->active || bd->team != AI_TEAM || bd->type != type) continue;
+        if (row != -1 && TechClaimed(b, row)) continue;
         if (!bd->constructing) return b;
         found = b;
     }
     return found;
 }
+
+// One of our buildings of this type (a finished one if there is one), or -1.
+static int FindOwn(BuildingType type) { return FindOwnTech(type, -1); }
 
 static void TechTick(void)
 {
@@ -321,7 +336,7 @@ static void TechTick(void)
         const char *name = BUILDING_STATS[type].name;
         if (!BuildingIsAlive(techSlot[k], techSerial[k]))   // lost, or never had one: maybe we own one anyway
         {
-            techSlot[k] = FindOwn(type);
+            techSlot[k] = FindOwnTech(type, k);
             if (techSlot[k] != -1) techSerial[k] = buildings[techSlot[k]].serial;
         }
         bool alive = BuildingIsAlive(techSlot[k], techSerial[k]);
@@ -338,7 +353,7 @@ static void TechTick(void)
         }
         if (freeWorker == -1 || !BuildingsCanBuild(AI_TEAM, type)) return;
         Vector2 spot;
-        if (BUILDING_STATS[type].needsWater && !BuildingsFindSpot(type, BuildingCentre(anchor), &spot)) continue;   // no shore near its base: skip it, don't save for it
+        if (!BuildingsFindSpot(type, BuildingCentre(anchor), &spot)) continue;   // no room (or no shore) near its base: skip it, don't save for it
 
         int cost = BUILDING_STATS[type].cost;
         if (EconomyGold(AI_TEAM) < cost)

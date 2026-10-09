@@ -2,6 +2,8 @@
 #   controls_overflow_test            the Controls page at several window sizes (see the .c file)
 #   controls_overflow_test_longnames  the same, with much longer unit / building names
 #   tile_class_test                   every tile x movement class, blocking, map edge, regions
+#   naval_test                        the Dock, boats and ships, reach, map keywords, the editor
+#   ai_mix_test                       the AI army mix (Falcon) and tech list (Air Factory, towers)
 cmake_minimum_required(VERSION 3.24)
 project(rts_tests C)
 
@@ -71,3 +73,13 @@ target_compile_options(naval_test PRIVATE -Wall -Wextra)
 target_compile_definitions(naval_test PRIVATE MAPS_DIR="${REPO}/maps")
 set_target_properties(naval_test PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_link_libraries(naval_test PRIVATE raylib m)
+
+# ai_mix_test: the AI's army mix (Falcon share, cap, Air Factory needed) and tech list (no window needed).
+# It #includes src/game/ai.c to reach its statics, so ai.c is left out of its sources.
+set(AI_TEST_SOURCES ${TILE_TEST_SOURCES})
+list(REMOVE_ITEM AI_TEST_SOURCES ${REPO}/src/game/ai.c)
+add_executable(ai_mix_test ai_mix_test.c text_hooks_passthrough.c ${AI_TEST_SOURCES})
+target_include_directories(ai_mix_test PRIVATE ${REPO}/src ${REPO}/src/game)
+target_compile_options(ai_mix_test PRIVATE -Wall -Wextra)
+set_target_properties(ai_mix_test PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+target_link_libraries(ai_mix_test PRIVATE raylib m)

@@ -73,6 +73,7 @@ In a game, **Esc** (**Ctrl** in the web build) opens the pause menu and the **Co
 | replace the art | [Art (sprites)](#art-sprites) |
 | add an armor or damage type | [Damage and armor](#damage-and-armor) |
 | tune the AI | [Computer opponent (AI)](#computer-opponent-ai): every number is a named constant in `config.h` |
+| make the AI use a new unit or building | [Extending the AI](#extending-the-ai) |
 | change keys | `KEY_...` defines and the `CONTROLS` table in `config.h` |
 | add a tile, or change who can cross one | [Tiles and movement classes](#tiles-and-movement-classes) |
 | change the font | [Font](#font) |
@@ -215,10 +216,11 @@ Every 2 seconds the AI:
 1. **Barracks:** once it has 3 workers and 150 gold, one worker builds a Barracks near its base.
    If gold piles up past 600 while every Barracks has a full queue, it builds another (up to 3).
    **Tech buildings:** once a Barracks is finished, it builds one of each building in
-   `AI_TECH_ORDER` (Archery Range, then Academy), each after the one before is finished, rebuilt
-   if destroyed. It pauses army training while it saves up for the next one, and uses any it was
-   given by the map file. It doesn't build Guard Towers: set `AI_BUILDS_TOWERS` to 1 in
-   `config.h` and one is added to the end of that list (one tower by its base, rebuilt if lost).
+   `AI_TECH_ORDER` (Archery Range, Academy, Air Factory, then **2 Guard Towers** by its main
+   base), each after the one before is finished, rebuilt if destroyed. It pauses army training
+   while it saves up for the next one, and uses any it was given by the map file. One that doesn't
+   fit near its base is skipped rather than saved for. `AI_MAIN_BASE_TOWERS` (0–3) sets how many
+   towers; `AI_BUILDS_TOWERS 0` turns them off. Expansions get no towers.
 2. **Workers:** each base aims for **8 workers per reachable gold node** near it (at most **16**),
    training at the base that needs them most. When every base is saturated it stops, and the
    gold goes into the army.
@@ -249,15 +251,16 @@ Every 2 seconds the AI:
    | Mage | 1 | |
    | Scout | 1 | 2 |
    | Medic | 1 | 4 |
+   | Falcon | 1 | 4 |
 
    Each time it picks the type furthest below its share (counting units alive and queued), at a
    building that trains it and has room in its queue (2 per building), until the queues are full.
    Types whose `requires` building it lacks are skipped.
    **Air defence:** for every player flyer it can see it wants `AI_ANTI_AIR_PER_FLYER` (2) units
    that can hit air (alive + queued). While it has fewer, it only trains types with `hitsAir`
-   (Archers, Scouts, Mages), even while saving for a building, and keeps its gold for them while
-   their buildings are busy. It doesn't train Falcons or Gunships (they aren't in the mix or
-   `AI_TECH_ORDER`); it builds an Air Factory only to ferry (5.).
+   (Archers, Scouts, Mages, Falcons), even while saving for a building, and keeps its gold for
+   them while their buildings are busy. Falcons are its only fighting flyers: it never trains
+   Airships to fight (only to ferry, 5.), and never builds a Dock or trains Boats or Ships.
    If it can't afford that type yet, it stops and saves for it instead of buying something
    cheaper. Change the shares to change its style. A new unit type is used once it has a row here.
 5. **Ferrying (`ai_ferry.c`):** if **no** player building can be reached on foot from its base
@@ -285,6 +288,55 @@ Every 2 seconds the AI:
 Every number (thresholds, distances, caps, timings) is a named constant in the **AI tuning**
 block of `config.h`. The debug overlay (**F3**, top left) shows the AI's gold, workers
 (have/target), bases, and what it's currently trying to do.
+
+## Extending the AI
+
+**What it does today:** builds Barracks (up to 3), then an Archery Range, an Academy, an Air
+Factory and 2 Guard Towers by its main base; keeps 8 workers per gold node; expands to up to 3
+bases; trains Melee, Knights, Archers, Mages, Scouts, Medics and Falcons by the army mix; switches
+to anti-air units when it sees your flyers; and ferries its army by Airship when it can't walk
+to you. All of that is driven by three places in `src/game/config.h`, so most changes are a
+table row, not code:
+
+| Edit | What it controls | Example |
+|---|---|---|
+| `AI_ARMY_MIX` | Which units it trains, how many of each (`share`), and a cap (`maxAlive`, 0 = none). A type that isn't listed is never trained. | `{ UNIT_FALCON, 1, 4 }`: one Falcon per 11 fighters, at most 4 alive |
+| `AI_TECH_ORDER` | Which buildings it builds after its first Barracks, in order. A type listed twice means two of them. A unit is only trained once the building it's `trainedAt` (and its `requires`) is finished, so a unit in the mix needs its building here. | `BUILDING_AIR_FACTORY` after `BUILDING_ACADEMY` |
+| The **AI tuning** block | Every number: timings, worker targets, expansion rules, Barracks cap, anti-air, ferrying, `AI_BUILDS_TOWERS` / `AI_MAIN_BASE_TOWERS`. | `AI_ANTI_AIR_PER_FLYER 2` |
+
+Two safety rules hold for anything you add: it never saves up for a building that doesn't fit
+near its base (it skips it), and it only places a building where `BuildingCanPlace` allows. A
+unit it can't train yet (no building, or the `requires` building missing) is skipped, so a wrong
+row can't stall it.
+
+### Worked example: make the AI train Spearmen
+
+Follow [Adding a new unit type](#adding-a-new-unit-type-walkthrough) first, so `UNIT_SPEARMAN`
+exists with its row (`trainedAt BUILDING_BARRACKS`, `cost 80`, `hitsAir false`). Then add one
+line to `AI_ARMY_MIX`:
+
+```c
+    { UNIT_SPEARMAN,  2,     0 },   // 2 Spearmen per ~13 fighters, no cap
+```
+
+That's all. The Barracks is the AI's first building, so it needs no `AI_TECH_ORDER` row; had you
+made it `trainedAt BUILDING_TEMPLE`, you would add `BUILDING_TEMPLE` to `AI_TECH_ORDER` too.
+Because `hitsAir` is false, it won't train Spearmen while it's short of anti-air, and idle
+Spearmen are never sent after flyers. To check it, play a game: Spearmen join the enemy's waves
+once its Barracks is up (scout for them, or turn fog off in the pause menu). `make test` still
+passes; its AI test checks the Falcon, not your row.
+
+### Not covered (good places to extend)
+
+These need code in `ai.c` / `ai_ferry.c`, not just a row:
+
+- **Airship bombing runs.** The AI flies Airships only as ferries; it never sends one to bomb.
+- **Naval units and Docks.** It ignores water: no Dock, Boats or Ships. (`AI_BUILDS_DOCKS 1` is
+  an unfinished start: it adds a Dock and Boats to the tables, but no naval tactics; it is off
+  and isn't part of the tested behaviour.)
+- **A new movement class.** Targets are filtered by `moveClass`, but expansion, ferrying and
+  "can I reach the player" all assume ground units walking (plus Airships carrying them).
+- **Towers at expansions.** Tech buildings all go by its main base.
 
 ## Debug overlay (F3)
 
@@ -570,8 +622,8 @@ transports) take 0. So 4 Knights fill an Airship, and 7 Workers leave no room fo
   loaded in a transport that no longer exists.
 - **Not saved in maps:** map files place Airships empty, and the editor's copy of a running game
   leaves units inside transports out. A new game starts with every transport empty.
-- **The AI doesn't use transports** (only your input can make units board), and the Airship's
-  bombs and targeting are unchanged.
+- **The AI uses transports only to ferry** its army when it can't walk to you (see
+  [Computer opponent](#computer-opponent-ai), 5.), and the Airship's bombs and targeting are unchanged.
 - **Hotkeys:** L and U also train Falcons and Airships when an **Air Factory** is selected.
   That's no clash: a building is never selected together with units. The startup check
   (`InspectorCheckHotkeys`) knows when each key is active, and only warns about keys that could
@@ -611,14 +663,14 @@ Example: a **Spearman**, a pierce-damage foot soldier with medium armor, trained
 **1. Add it to the enum** in `src/game/config.h`, before `UNIT_TYPE_COUNT`:
 
 ```c
-typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UNIT_MAGE, UNIT_SCOUT, UNIT_SPEARMAN, UNIT_TYPE_COUNT } UnitType;
+typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UNIT_MAGE, UNIT_SCOUT, UNIT_FALCON, UNIT_AIRSHIP, UNIT_BOAT, UNIT_SHIP, UNIT_SPEARMAN, UNIT_TYPE_COUNT } UnitType;
 ```
 
 **2. Give it a stats row** in `UNIT_STATS` (same file):
 
 ```c
 //                   name        trainedAt          hotkey  hp      damage  damageType     range  cooldown  speed  armor  armorType     cost  trainTime  sight       canHeal  healRate  healRange  splash  falloff  minRange  hitsGround  hitsAir  requires       cargoCapacity  cargoSlots  moveClass    description
-[UNIT_SPEARMAN] = { "Spearman", BUILDING_BARRACKS, KEY_P,  100.0f, 10.0f,  DAMAGE_PIERCE, 20.0f, 0.9f,     70.0f, 1.0f,  ARMOR_MEDIUM, 80,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       false,   BUILDING_NONE, 0,             1,          MOVE_GROUND, "A cheap pikeman who keeps charging Knights at bay." },
+[UNIT_SPEARMAN] = { "Spearman", BUILDING_BARRACKS, KEY_J,  100.0f, 10.0f,  DAMAGE_PIERCE, 20.0f, 0.9f,     70.0f, 1.0f,  ARMOR_MEDIUM, 80,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       false,   BUILDING_NONE, 0,             1,          MOVE_GROUND, "A cheap pikeman who keeps charging Knights at bay." },
 ```
 
 - `name` is used everywhere: inspector, editor button, map files, PNG file name.
@@ -643,8 +695,8 @@ typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UN
 (see [Art (sprites)](#art-sprites)). Without it the Spearman is a plain team-coloured circle; to
 give that shape a mark of its own, add a case to `UnitsDrawIcon()` in `units.c`.
 
-**4. Build and run** (`make run`). The console should say `SPRITES: 16 of 16 PNGs packed`. If
-it says `no units/spearman.png`, check the file name.
+**4. Build and run** (`make run`). The console should say `SPRITES: 25 of 25 PNGs packed`
+(one more than before). If it says `no units/spearman.png`, check the file name.
 
 **5. Optional: put Spearmen in a map.** Add a line to a `.map` file (`<unit> <team> <x> <y>`, in tiles):
 
@@ -686,7 +738,7 @@ button and `temple.png` art, all from the row.
 - `sight` (tiles it reveals in the fog) can be up to `FOG_MAX_SIGHT` (16, `config.h`).
 - The AI trains the types in `AI_ARMY_MIX` at the buildings in `AI_TECH_ORDER` (both in
   `config.h`). It never builds a building or trains a unit it isn't told to, so new rows don't
-  change it: add your unit to `AI_ARMY_MIX` to have the AI use it.
+  change it: add your unit to `AI_ARMY_MIX` to have the AI use it (see [Extending the AI](#extending-the-ai)).
 
 ## Winning and losing
 
@@ -871,7 +923,8 @@ machine lower the uncapped numbers a lot. Press F3 to see the live numbers.
 - Maps and art are read at startup; changing them needs a restart (the web build needs a rebuild).
 - **Text is Latin-1 only** (English and western European accents), see [Font](#font).
 - **Every unit is the same size** (`UNIT_RADIUS`), so the Airship is drawn as small as a Falcon.
-- **The AI doesn't fight with flyers** (it defends against them, and uses Airships only to ferry).
+- **The AI's only fighting flyers are Falcons** (at most 4). It uses Airships only to ferry, never
+  for bombing runs, and ignores water: no Docks, Boats or Ships. See [Extending the AI](#extending-the-ai).
 - **The AI's ferrying is simple.** It lands near the closest player building rather than
   picking a weak spot, and it lands even under fire once it's close (`AI_FERRY_COMMIT_TILES`);
   `AI_FERRY_DANGER_TILES` above 0 makes it more careful but on Islands it then turned back on most

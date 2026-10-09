@@ -320,17 +320,25 @@ static const UnitType DEBUG_ARMY_MIX[] = { UNIT_MELEE, UNIT_ARCHER, UNIT_MELEE, 
 
 // Tech buildings: after its first Barracks the AI builds one of each, in this order (each once
 // the one before is finished, and only when BuildingsCanBuild() allows it), and rebuilds them if
-// destroyed. Army training pauses while it saves up for the next one.
-// AI_BUILDS_TOWERS 1: a Guard Tower is added to the end of that list, so the AI
-// builds one by its base once its other tech buildings stand (off for now).
+// destroyed. Army training pauses while it saves up for the next one. A type listed twice means
+// two of them. One that doesn't fit near its base is skipped (not saved for).
+// AI_BUILDS_TOWERS 1: AI_MAIN_BASE_TOWERS Guard Towers are added to the end of that list, so
+// the AI builds them by its main base once its other tech buildings stand (not at expansions).
 // AI_BUILDS_DOCKS 1: a Dock is added too (near its base, touching water; skipped if there's no
 // such spot), and Boats join its army mix (at most AI_BOATS_MAX alive). Off: it never builds a
 // Dock or trains Boats or Ships.
-#define AI_BUILDS_TOWERS 0
-#define AI_BUILDS_DOCKS  0
-#define AI_BOATS_MAX     6
-static const BuildingType AI_TECH_ORDER[] = { BUILDING_ARCHERY_RANGE, BUILDING_ACADEMY,
-#if AI_BUILDS_TOWERS
+#define AI_BUILDS_TOWERS    1
+#define AI_MAIN_BASE_TOWERS 2   // 0 to 3 (one #if row each below)
+#define AI_BUILDS_DOCKS     0
+#define AI_BOATS_MAX        6
+static const BuildingType AI_TECH_ORDER[] = { BUILDING_ARCHERY_RANGE, BUILDING_ACADEMY, BUILDING_AIR_FACTORY,
+#if AI_BUILDS_TOWERS && AI_MAIN_BASE_TOWERS >= 1
+    BUILDING_GUARD_TOWER,
+#endif
+#if AI_BUILDS_TOWERS && AI_MAIN_BASE_TOWERS >= 2
+    BUILDING_GUARD_TOWER,
+#endif
+#if AI_BUILDS_TOWERS && AI_MAIN_BASE_TOWERS >= 3
     BUILDING_GUARD_TOWER,
 #endif
 #if AI_BUILDS_DOCKS
@@ -342,8 +350,8 @@ static const BuildingType AI_TECH_ORDER[] = { BUILDING_ARCHERY_RANGE, BUILDING_A
 // Army mix: at each production building the AI trains the unit type (of those trained there)
 // that is furthest below its share of the army, counting units alive and queued. maxAlive caps
 // a type (0 = no cap). Types not listed are never trained by the AI (Workers are handled
-// separately). Example: 4 Melee, 2 Knights, 3 Archers, 1 Mage per 10 fighters; at most
-// 2 Scouts and 4 Medics.
+// separately). Example: 4 Melee, 2 Knights, 3 Archers, 1 Mage, 1 Falcon per 11 fighters; at
+// most 2 Scouts, 4 Medics and 4 Falcons.
 typedef struct AiArmyShare { UnitType type; int share; int maxAlive; } AiArmyShare;
 static const AiArmyShare AI_ARMY_MIX[] = {
     //  type          share  maxAlive
@@ -353,6 +361,7 @@ static const AiArmyShare AI_ARMY_MIX[] = {
     { UNIT_MAGE,      1,     0 },
     { UNIT_SCOUT,     1,     2 },
     { UNIT_MEDIC,     1,     4 },
+    { UNIT_FALCON,    1,     4 },
 #if AI_BUILDS_DOCKS
     { UNIT_BOAT,      2,     AI_BOATS_MAX },
 #endif
