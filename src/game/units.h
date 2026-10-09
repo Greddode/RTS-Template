@@ -68,9 +68,24 @@ typedef struct Unit {
     bool         healOrdered;         // right-clicked: follow this one anywhere until it's full
     int          healTarget;          // unit slot...
     unsigned int healTargetSerial;    // ...and serial
+
+    // Transports (transport.c)
+    bool         loaded;              // inside a transport: still in the pool, but out of the world (UnitIsActiveInWorld)
+    bool         boarding;            // walking to `transport` to get in
+    int          transport;           // the transport it's in or boarding: slot...
+    unsigned int transportSerial;     // ...and serial
+    bool         unloading;           // a transport: flying to / letting cargo out at unloadAt
+    Vector2      unloadAt;
 } Unit;
 
 extern Unit units[MAX_UNITS];
+
+// THE test for "this unit takes part in the world": it's in the pool and not
+// inside a transport. Loaded units keep their slot and HP but are left out of
+// the grid, drawing, the minimap, fog sight, selection, targeting, splash,
+// healing and separation - everything that asks this. (Plain `active` only
+// means "the slot is used": unit counts include loaded units.)
+static inline bool UnitIsActiveInWorld(const Unit *u) { return u->active && !u->loaded; }
 
 static inline MoveClass UnitMoveClass(const Unit *u) { return UNIT_STATS[u->type].moveClass; }   // from UNIT_STATS
 static inline bool UnitIsFlying(const Unit *u) { return UnitMoveClass(u) == MOVE_AIR; }

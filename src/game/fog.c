@@ -78,7 +78,7 @@ static void Recompute(int team)
     for (int i = 0; i < MAX_UNITS; i++)
     {
         const Unit *u = &units[i];
-        if (!u->active || u->team != team) continue;
+        if (!UnitIsActiveInWorld(u) || u->team != team) continue;   // loaded units see nothing
         Reveal(grid, (int)(u->pos.x/TILE_SIZE), (int)(u->pos.y/TILE_SIZE), UNIT_STATS[u->type].sight);
     }
     for (int b = 0; b < MAX_BUILDINGS; b++)

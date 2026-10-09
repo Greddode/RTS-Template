@@ -8,6 +8,11 @@
 //                       with a building selected: set its rally point (flag)
 //   A, then right click attack-move there (left click or Esc cancels)
 //   S / H               stop / hold position
+//   Transports (transport.c), e.g. the Airship:
+//     right click your transport   the selected units that fit walk to it and board
+//     L / U                        transport selected: nearby idle units board / unload below it
+//     Ctrl + right click ground    the transport flies there and unloads (Shift on the web,
+//                                  where Ctrl pauses: KEY_UNLOAD_MODIFIER)
 //   Placing a building  (started from the inspector's Build buttons) a ghost
 //                       follows the mouse, green = can build, red = blocked.
 //                       Left click places, right click or Esc cancels.
@@ -29,6 +34,7 @@
 #include "fog.h"
 #include "grid.h"
 #include "heal.h"
+#include "transport.h"
 #include "ui.h"
 #include "units.h"
 #include "raymath.h"
@@ -86,7 +92,7 @@ static void PruneSelection(void)
     int kept = 0;
     for (int k = 0; k < selCount; k++)
     {
-        if (!UnitIsAlive(selUnits[k], selSerials[k])) continue;
+        if (!UnitIsAlive(selUnits[k], selSerials[k]) || !UnitIsActiveInWorld(&units[selUnits[k]])) continue;   // dead, or boarded a transport
         selUnits[kept] = selUnits[k];
         selSerials[kept] = selSerials[k];
         kept++;
@@ -215,6 +221,28 @@ static int KeepNonWorkers(int count)
 // unfinished building (workers help build), gold node, ground. Before the
 // last three, selected healers on a damaged friendly unit follow and heal it
 // (the rest of the selection gets the normal order).
+static bool UnloadModifierDown(void)
+{
+#if defined(__EMSCRIPTEN__)
+    return IsKeyDown(KEY_UNLOAD_MODIFIER) || IsKeyDown(KEY_RIGHT_SHIFT);
+#else
+    return IsKeyDown(KEY_UNLOAD_MODIFIER) || IsKeyDown(KEY_RIGHT_CONTROL);
+#endif
+}
+
+// Split `found` into transports (moved to `transports`) and the rest (kept in `found`).
+static int SplitTransports(int count, int *transports, int *nTransports)
+{
+    int rest = 0;
+    *nTransports = 0;
+    for (int k = 0; k < count; k++)
+    {
+        if (IsTransport(found[k])) transports[(*nTransports)++] = found[k];
+        else found[rest++] = found[k];
+    }
+    return rest;
+}
+
 static void OrderSelected(Vector2 point)
 {
     int count = CollectSelected();
@@ -223,6 +251,40 @@ static void OrderSelected(Vector2 point)
         int b = InputSelectedBuilding();
         if (b != -1) BuildingSetRally(b, point);   // a building is selected: right click = rally point
         return;
+    }
+
+    // Unload modifier held: selected transports fly there and unload; everyone else moves there.
+    static int transports[MAX_UNITS];
+    int nt;
+    if (UnloadModifierDown())
+    {
+        int rest = SplitTransports(count, transports, &nt);
+        if (nt > 0)
+        {
+            for (int k = 0; k < nt; k++) TransportOrderUnload(transports[k], point);
+            UnitsOrderMove(found, rest, point);
+            return;
+        }
+    }
+
+    // Right click on one of our transports: the selected units that can be carried board it.
+    int own = UnitAtPoint(point, PLAYER_TEAM);
+    if (own != -1 && IsTransport(own))
+    {
+        static int boarders[MAX_UNITS];
+        int nb = 0, rest = 0;
+        for (int k = 0; k < count; k++)
+        {
+            if (found[k] != own && UNIT_STATS[units[found[k]].type].cargoSlots > 0) boarders[nb++] = found[k];
+            else found[rest++] = found[k];
+        }
+        if (nb > 0)
+        {
+            TransportOrderBoard(boarders, nb, own);
+            UnitsOrderMove(found, rest, point);   // flyers and other transports just go there
+            return;
+        }
+        count = rest + nb;   // nobody can board: an ordinary right click below
     }
 
     int enemy = UnitAtPoint(point, AI_TEAM);
@@ -345,6 +407,18 @@ void InputUpdate(void)
         int count = CollectSelected();
         if (IsKeyPressed(KEY_STOP)) UnitsOrderStop(found, count);
         else UnitsOrderHold(found, count);
+    }
+    // Transports in the selection: KEY_LOAD = nearby idle units board, KEY_UNLOAD = unload below it.
+    // (With an Air Factory selected, the same letters train units: a building is never selected with units.)
+    if (IsKeyPressed(KEY_LOAD) || IsKeyPressed(KEY_UNLOAD))
+    {
+        int count = CollectSelected();
+        for (int k = 0; k < count; k++)
+        {
+            if (!IsTransport(found[k])) continue;
+            if (IsKeyPressed(KEY_LOAD)) TransportLoadNearby(found[k]);
+            else TransportOrderUnload(found[k], units[found[k]].pos);
+        }
     }
 
     if (attackMoveArmed)

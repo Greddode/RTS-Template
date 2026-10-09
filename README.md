@@ -86,7 +86,9 @@ build copies `maps/` next to the game (`make run` re-copies it each time); the w
 it into the page.
 
 Included: `dire_straight_64x64.map` ("Dire Straight", 64×64) and `river_crossing_128x128.map`
-("River Crossing", 128×128), both made with the map editor. **The full file format, the rules a
+("River Crossing", 128×128), both made with the map editor, and `islands_64x64.map` ("Islands",
+64×64): two islands with lava fields and water between them and no ground path, so the only way
+across is by air (the AI learns to ferry its army there, see below). **The full file format, the rules a
 map must follow and tips for fair maps are in [`maps/FORMAT.md`](maps/FORMAT.md).**
 
 ### Map file format
@@ -254,10 +256,31 @@ Every 2 seconds the AI:
    **Air defence:** for every player flyer it can see it wants `AI_ANTI_AIR_PER_FLYER` (2) units
    that can hit air (alive + queued). While it has fewer, it only trains types with `hitsAir`
    (Archers, Scouts, Mages), even while saving for a building, and keeps its gold for them while
-   their buildings are busy. **It doesn't build an Air Factory or train flyers** (they aren't in
-   the mix or `AI_TECH_ORDER`).
+   their buildings are busy. It doesn't train Falcons or Gunships (they aren't in the mix or
+   `AI_TECH_ORDER`); it builds an Air Factory only to ferry (5.).
    If it can't afford that type yet, it stops and saves for it instead of buying something
    cheaper. Change the shares to change its style. A new unit type is used once it has a row here.
+5. **Ferrying (`ai_ferry.c`):** if **no** player building can be reached on foot from its base
+   (different ground regions, e.g. on Islands), it needs transport. Then it builds what the
+   Airship needs (Barracks, Academy, Air Factory, saving gold like for an expansion) and trains an
+   Airship; more (up to `AI_FERRY_MAX_AIRSHIPS`) when every one is busy and gold piles up. Each
+   Airship gathers idle combat units near the Air Factory (never workers; at most
+   `AI_FERRY_MEDICS_PER_TRIP` Medic, only with `AI_FERRY_ESCORT_MIN` fighters; never units in a
+   fight), flies them to a **drop point** and unloads, and the landed units attack as usual.
+   The drop point is the nearest tile to the target, searched in a spiral, that is open ground
+   on the target's island, outside the range of towers it knows about, not in the middle of
+   enemy units, and with no anti-air near it or on the way there (it only counts what it can see,
+   so `AI_SEES_THROUGH_FOG` applies). If none is found near the target it tries near the shore.
+   **Safety:** it turns back if it loses `AI_FERRY_ABORT_DAMAGE` of its HP on the way, or if
+   anti-air appears at the drop point and no other safe one is left (once within
+   `AI_FERRY_COMMIT_TILES` it lands anyway). Back home it lets the group out. Units are only ever
+   let out on open ground (the transport code itself never unloads onto water, lava or a
+   building). Every lost Airship is counted: it waits `AI_FERRY_RETRY_SECONDS` before training
+   another, and gives up ferrying after `AI_FERRY_MAX_FAILURES` (F3 shows it).
+   On a map where everything is reachable on foot none of this happens: the AI plays exactly as
+   before (checked: same results to the tick on Random, Dire Straight and River Crossing).
+   `AI_FERRY_EXPANSION` (default 0): an idle Airship can carry a Worker to build a Base on a gold
+   field on another island.
 
 Every number (thresholds, distances, caps, timings) is a named constant in the **AI tuning**
 block of `config.h`. The debug overlay (**F3**, top left) shows the AI's gold, workers
@@ -483,8 +506,9 @@ The inspector shows a selected Mage's splash radius, edge damage and minimum ran
 | Role | very fast scout and skirmisher | slow, tough bomber |
 | HP / armor | 45, Light | 420, Heavy (3) |
 | Attack | 6 Pierce, range 90, hits **air and ground** | 28 Blunt bombs, range 24, splash 44 px, hits **ground only** |
-| Speed / cost | 140 px/s, 70 gold | 38 px/s, 300 gold |
+| Speed / cost | 140 px/s, 70 gold | 38 px/s, 450 gold |
 | Needs | the Air Factory | the Air Factory **and a finished Academy** |
+| Carries | nothing | **8 slots of ground units** (see [Transports](#transports-airship-cargo)) |
 
 **Flying** (`moveClass` `MOVE_AIR`): flyers go in a straight line over water, rock, lava and
 buildings, with no pathfinding. Nothing on the map blocks them, but they can't leave it. They
@@ -514,6 +538,49 @@ flyers (friendly or not) but hit everything on the ground in the blast, friends 
 these. `UnitsCanTrain(team, type)` in `units.c` is the one check, used by `BuildingQueueTrain()`,
 so the player and the AI follow the same rule. Until then the Train button is greyed and says
 "Airship - Requires Academy"; clicking it or pressing its hotkey says "Requires Academy".
+
+## Transports (Airship cargo)
+
+Two `UNIT_STATS` columns: `cargoCapacity` (slots it carries; 0 = not a transport) and
+`cargoSlots` (slots it takes inside one; 0 = can't be carried). The **Airship** carries 8 slots.
+Worker, Melee, Archer, Scout, Medic and Mage take 1, the Knight takes 2, and flyers (and
+transports) take 0. So 4 Knights fill an Airship, and 7 Workers leave no room for a Knight.
+
+| You do | What happens |
+|---|---|
+| Right click your Airship (ground units selected) | They walk to it and get in when within `TRANSPORT_BOARD_DISTANCE` (28 px), while there are free slots. One that doesn't fit stops, and you see "Airship full" |
+| **L** (Airship selected) | Your idle ground units within `TRANSPORT_LOAD_RADIUS_TILES` (5 tiles) board it, nearest first, as many as fit |
+| **U** (Airship selected) | Unload everything below it |
+| **Ctrl + right click** the ground (Airship selected; **Shift** in the web build, where Ctrl pauses) | It flies there and unloads |
+| Click a unit's icon in the Airship's inspector | That unit gets out (if the Airship is over open ground) |
+
+- **Getting out:** units only come out where a ground unit can stand. If the drop point is
+  water, rock, lava or a building, the Airship first flies to the nearest open ground tile
+  (searching up to `TRANSPORT_DROP_SEARCH_TILES`). They come out `TRANSPORT_UNLOAD_PER_TICK`
+  (2) per tick, each on a free spot around the drop point, as ordinary idle units with the HP
+  they had. Then the Airship is empty and free again.
+- **Inside**, a unit keeps its pool slot and HP but is out of the world: nothing can target,
+  splash, heal or select it, it gives no fog sight, it has no minimap dot, and it doesn't push
+  others. `UnitIsActiveInWorld()` (`units.h`) is the one test for "takes part in the world";
+  everything that used to ask "is this slot active?" for that purpose asks it instead. Unit
+  counts (the F3 overlay, the pool limit) still count units inside transports.
+- **Destroyed Airship:** over walkable ground its cargo drops around it with its current HP;
+  over water, rock or lava the cargo is lost. One line goes to the log. A loaded unit whose
+  transport is gone (checked every tick by serial) is handled the same way, so no unit can stay
+  loaded in a transport that no longer exists.
+- **Not saved in maps:** map files place Airships empty, and the editor's copy of a running game
+  leaves units inside transports out. A new game starts with every transport empty.
+- **The AI doesn't use transports** (only your input can make units board), and the Airship's
+  bombs and targeting are unchanged.
+- **Hotkeys:** L and U also train Falcons and Airships when an **Air Factory** is selected.
+  That's no clash: a building is never selected together with units. The startup check
+  (`InspectorCheckHotkeys`) knows when each key is active, and only warns about keys that could
+  be pressed in the same situation.
+
+**Making another transport** (a boat, a wagon, a bigger airship): give its `UNIT_STATS` row a
+`cargoCapacity` above 0, and give each unit that may ride in it a `cargoSlots` above 0. The
+boarding, cargo panel, L / U keys and unloading all follow from the table. A ground or naval
+transport works the same way: cargo always gets out onto ground tiles.
 
 ## Guard Tower (buildings that attack)
 
@@ -550,8 +617,8 @@ typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UN
 **2. Give it a stats row** in `UNIT_STATS` (same file):
 
 ```c
-//                   name        trainedAt          hotkey  hp      damage  damageType     range  cooldown  speed  armor  armorType     cost  trainTime  sight       canHeal  healRate  healRange  splash  falloff  minRange  hitsGround  hitsAir  requires       moveClass    description
-[UNIT_SPEARMAN] = { "Spearman", BUILDING_BARRACKS, KEY_P,  100.0f, 10.0f,  DAMAGE_PIERCE, 20.0f, 0.9f,     70.0f, 1.0f,  ARMOR_MEDIUM, 80,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       false,   BUILDING_NONE, MOVE_GROUND, "A cheap pikeman who keeps charging Knights at bay." },
+//                   name        trainedAt          hotkey  hp      damage  damageType     range  cooldown  speed  armor  armorType     cost  trainTime  sight       canHeal  healRate  healRange  splash  falloff  minRange  hitsGround  hitsAir  requires       cargoCapacity  cargoSlots  moveClass    description
+[UNIT_SPEARMAN] = { "Spearman", BUILDING_BARRACKS, KEY_P,  100.0f, 10.0f,  DAMAGE_PIERCE, 20.0f, 0.9f,     70.0f, 1.0f,  ARMOR_MEDIUM, 80,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       false,   BUILDING_NONE, 0,             1,          MOVE_GROUND, "A cheap pikeman who keeps charging Knights at bay." },
 ```
 
 - `name` is used everywhere: inspector, editor button, map files, PNG file name.
@@ -560,6 +627,7 @@ typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UN
 - `canHeal`, `healRate`, `healRange`: `false, 0, 0` for a fighter (healers: see below).
 - `hitsGround`, `hitsAir`: what it can attack; a pike can't reach flyers. `requires`: a building
   it needs besides the Barracks (`BUILDING_NONE` here). See [Flying units](#flying-units-what-can-hit-what-and-unit-prerequisites).
+- `cargoCapacity`, `cargoSlots`: 0 and 1, so it isn't a transport but can ride in one (see [Transports](#transports-airship-cargo)).
 - `moveClass`: `MOVE_GROUND` for a soldier (see [Tiles and movement classes](#tiles-and-movement-classes)).
 - `description`: one sentence the inspector shows above its panel when a Spearman is selected,
   or when the mouse is over its Train button. Long text is word-wrapped and scrolls; `""` shows
@@ -595,7 +663,7 @@ support, fog sight and the minimap dot. A new **building** works the same way: a
 own heal numbers. It then behaves exactly like the Medic (no code):
 
 ```c
-[UNIT_PRIEST] = { "Priest", BUILDING_TEMPLE, KEY_I, 50.0f, 0.0f, DAMAGE_MAGIC, 0.0f, 0.0f, 65.0f, 0.0f, ARMOR_LIGHT, 150, 9.0f, UNIT_SIGHT, true, 12.0f, 80.0f, 0.0f, 0.0f, 0.0f, false, false, BUILDING_NONE, MOVE_GROUND, "Heals allies from further away than a Medic." },
+[UNIT_PRIEST] = { "Priest", BUILDING_TEMPLE, KEY_I, 50.0f, 0.0f, DAMAGE_MAGIC, 0.0f, 0.0f, 65.0f, 0.0f, ARMOR_LIGHT, 150, 9.0f, UNIT_SIGHT, true, 12.0f, 80.0f, 0.0f, 0.0f, 0.0f, false, false, BUILDING_NONE, 0, 1, MOVE_GROUND, "Heals allies from further away than a Medic." },
 ```
 
 **Variant: a building that needs another.** A **Temple** that trains the Priest and needs an
@@ -654,7 +722,10 @@ generated from `CONTROLS` and the key bindings in `config.h`; this table mirrors
 | M / N (Barracks selected) | Train Melee (75) / Knight (175); queue up to 5 |
 | C / O (Archery Range selected) | Train an Archer (100) / Scout (60); queue up to 5 |
 | D / G (Academy selected) | Train a Medic (125) / Mage (200); queue up to 5 |
-| L / U (Air Factory selected) | Train a Falcon (70) / Airship (300, needs a finished Academy); queue up to 5 |
+| L / U (Air Factory selected) | Train a Falcon (70) / Airship (450, needs a finished Academy); queue up to 5 |
+| L / U (Airship selected) | Nearby idle ground units board it / unload everything below it |
+| Right click your Airship (ground units selected) | They walk to it and get in (8 slots; a Knight takes 2) |
+| Ctrl + right click ground (web: Shift), Airship selected | It flies there and unloads (on the nearest open ground) |
 | Click a queue icon (building selected) | Cancel that unit, gold refunded (destroying the building loses its queue) |
 | B / K / R / E / F / V (workers selected) | Build a Base (400) / Barracks (150) / Archery Range (175) / Academy (450, needs a finished Barracks) / Air Factory (250, needs a finished Barracks) / Guard Tower (200, needs a finished Barracks): a ghost follows the mouse, green = OK, red = blocked; left click places, right click / Esc / the key again cancels |
 | Esc (web: Ctrl) | Cancel a pending attack-move or building placement; otherwise open the pause menu (Resume, Fog of war on/off, Controls, Main Menu, Exit). The web build uses Left Ctrl because browsers use Esc to leave fullscreen; change it with `KEY_PAUSE` in `config.h` |
@@ -689,6 +760,7 @@ and `src/editor/` for the editor.
 | `web/shell.html` | Web build only: the page around the game (canvas scaling, loading bar, no right-click menu, game keys kept from the browser) |
 | `game/sprites.c` | Optional PNG art: scans `assets/sprites`, packs it into one atlas texture (shelf packer), draws units / buildings / tiles from it |
 | `game/camera.c` | Pan / zoom, visible-area queries; the editor's zoom-to-fit (`CamUpdateEditor()`) |
+| `game/transport.c` | Transports: boarding, cargo (`cargoCapacity` / `cargoSlots`), L / U, unloading onto free ground, cargo of a destroyed transport |
 | `game/units.c` | Unit pool, movement, separation (flyers only with flyers), drawing (flyers above, with shadows), orders, `UnitsCanTrain()` |
 | `game/grid.c` | Spatial grid for nearby-unit queries (nearest enemy: ground ones, flyers, or both) |
 | `game/path.c` | A* pathfinding per movement class (air: straight, no search): request queue, per-frame time budget, path smoothing; regions per class ("can I get there?") |
@@ -698,6 +770,7 @@ and `src/editor/` for the editor.
 | `game/heal.c` | Healers (`canHeal`): find the nearest damaged ally (grid), walk into range, heal per tick, spread over patients, follow-and-heal order, green heal lines |
 | `game/combat.c` | Attacking, chasing, auto-targeting (aggro), what can hit what (`hitsGround` / `hitsAir`), towers (`CombatBuildingTick`), projectile pool (arrows, magic bolts and bombs with splash, splash rings), minimum range, the damage formula (`CombatDamage()`: damage type × armor type, minus armor) |
 | `game/ai.c` | Enemy AI: trains workers to a per-node target, builds a Barracks and tech buildings, expands to new gold, trains its army (and air defence against player flyers), sends idle units at player units they can hit |
+| `game/ai_ferry.c` | Enemy AI, ferrying: needs transport? builds the Air Factory and Airships, gathers a group, picks a safe drop point, flies, unloads, turns back when in danger (`ai_internal.h` is what it shares with `ai.c`) |
 | `game/economy.c` | Gold per team, gold node pool, worker mining loop, gold HUD (top right) |
 | `game/buildings.c` | Building pool, tile blocking, placement checks, prerequisites (`BuildingsCanBuild()`), production queue (cancel/refund), rally points, gold drop-off lookup, construction by workers, drawing |
 | `game/ui.c` | Tiny immediate-mode UI (buttons, panels, labels, tabs, scroll areas, word-wrapped text boxes), scales with window height, blocks clicks from reaching the game; the UI font: all text is drawn and measured here |
@@ -717,6 +790,7 @@ and 30 Scouts; 732 units in all).
 |---|---|---|---|
 | FPS, 100 workers + 300 vs 300 | 60 (min 60) | 390 avg (min 355) | 59 (min 59) |
 | Same, with the Inter font (camera zoomed out over the base and the battle, Base selected) | 60 (min 59.6) | 351–406 avg (3 runs; 1.0.0 in the same runs: 381–433) | |
+| Same, plus 5 Airships per side carrying 80 units in all | 60 (min 59.7) | 351–355 avg (3 runs; the plain battle in the same runs: 356–404) | |
 | Same, plus 10 Guard Towers per side | 60 (min 59.9) | 335–352 avg (3 runs; without towers in the same runs: 348–360) | |
 | Same, each side's 300 including 15 Falcons and 5 Airships | 60 (min 59.5) | 331–356 avg (3 runs; all-ground in the same runs: 315–412) | |
 | Map editor, whole 128×128 map on screen | | 124 avg | |
@@ -755,7 +829,13 @@ running on the same machine lower the uncapped numbers a lot. Press F3 to see th
 - Maps and art are read at startup; changing them needs a restart (the web build needs a rebuild).
 - **Text is Latin-1 only** (English and western European accents), see [Font](#font).
 - **Every unit is the same size** (`UNIT_RADIUS`), so the Airship is drawn as small as a Falcon.
-- **The AI doesn't use flyers** (it only defends against them).
+- **The AI doesn't fight with flyers** (it defends against them, and uses Airships only to ferry).
+- **The AI's ferrying is simple.** It lands near the closest player building rather than
+  picking a weak spot, and it lands even under fire once it's close (`AI_FERRY_COMMIT_TILES`);
+  `AI_FERRY_DANGER_TILES` above 0 makes it more careful but on Islands it then turned back on most
+  trips and never finished the game. It ferries only when *nothing* of the player's can be
+  reached on foot (a map with one island cut off is played as a normal ground game), and it
+  doesn't shoot down or chase the player's Airships on purpose.
 
 ### Balance (measured)
 

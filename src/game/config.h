@@ -113,6 +113,9 @@ typedef enum { MOVE_GROUND, MOVE_NAVAL, MOVE_AIR, MOVE_CLASS_COUNT } MoveClass;
 // damages (splash included) what it can't hit. Healers: false, false.
 // `requires`: besides the building in `trainedAt`, the team must own a
 // FINISHED one of these to train it (UnitsCanTrain); BUILDING_NONE = nothing.
+// Transports (transport.c): `cargoCapacity` > 0 makes a unit carry other
+// units, that many slots' worth; `cargoSlots` is how many slots a unit takes
+// in one (0 = it can't be carried).
 typedef enum { UNIT_MELEE, UNIT_ARCHER, UNIT_WORKER, UNIT_KNIGHT, UNIT_MEDIC, UNIT_MAGE, UNIT_SCOUT, UNIT_FALCON, UNIT_AIRSHIP, UNIT_TYPE_COUNT } UnitType;
 
 typedef struct UnitStats {
@@ -139,21 +142,23 @@ typedef struct UnitStats {
     bool  hitsGround;     // can attack ground / naval units and buildings
     bool  hitsAir;        // can attack flying units
     BuildingType requires;   // must own a finished one of these to train it (besides trainedAt); BUILDING_NONE = nothing
+    int   cargoCapacity;  // a transport: slots of cargo it carries (0 = not a transport)
+    int   cargoSlots;     // slots it takes inside a transport (0 = can't be carried)
     MoveClass moveClass;  // MOVE_GROUND, MOVE_NAVAL or MOVE_AIR
     const char *description;   // shown in the inspector (selected, or hovering its Train button); "" = none
 } UnitStats;
 
 static const UnitStats UNIT_STATS[UNIT_TYPE_COUNT] = {
-    //                  name       trainedAt               hotkey  hp      damage  damageType     range   cooldown  speed  armor  armorType     cost  trainTime  sight       canHeal  healRate  healRange  splash  falloff  minRange  hitsGround  hitsAir  requires          moveClass    description
-    [UNIT_MELEE]   = { "Melee",   BUILDING_BARRACKS,      KEY_M,  120.0f, 12.0f,  DAMAGE_BLUNT,   16.0f, 0.8f,     75.0f, 1.0f,  ARMOR_MEDIUM, 75,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       false,   BUILDING_NONE,    MOVE_GROUND, "A cheap, sturdy foot soldier whose mace crushes heavy armor." },
-    [UNIT_ARCHER]  = { "Archer",  BUILDING_ARCHERY_RANGE, KEY_C,   70.0f,  9.0f,  DAMAGE_PIERCE, 120.0f, 1.2f,     65.0f, 0.0f,  ARMOR_LIGHT,  100,  7.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       true,    BUILDING_NONE,    MOVE_GROUND, "Shoots from a distance, deadly against light armor but weak against plate." },
-    [UNIT_WORKER]  = { "Worker",  BUILDING_BASE,          KEY_W,   40.0f,  4.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  50,   5.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       false,   BUILDING_NONE,    MOVE_GROUND, "Mines gold and constructs buildings, but barely fights." },
-    [UNIT_KNIGHT]  = { "Knight",  BUILDING_BARRACKS,      KEY_N,  300.0f, 18.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     55.0f, 2.0f,  ARMOR_HEAVY,  175,  10.0f,     UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       false,   BUILDING_NONE,    MOVE_GROUND, "A slow, heavily armored soldier that hits hard and shrugs off arrows." },
-    [UNIT_MEDIC]   = { "Medic",   BUILDING_ACADEMY,       KEY_D,   60.0f,  0.0f,  DAMAGE_PIERCE,   0.0f, 0.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  125,  8.0f,      UNIT_SIGHT, true,    8.0f,     64.0f,     0.0f,   0.0f,    0.0f,     false,      false,   BUILDING_NONE,    MOVE_GROUND, "Heals wounded allies nearby instead of attacking." },
-    [UNIT_MAGE]    = { "Mage",    BUILDING_ACADEMY,       KEY_G,   50.0f, 30.0f,  DAMAGE_MAGIC,  200.0f, 2.5f,     50.0f, 0.0f,  ARMOR_LIGHT,  200,  12.0f,     UNIT_SIGHT, false,   0.0f,     0.0f,      48.0f,  0.3f,    72.0f,    true,       true,    BUILDING_NONE,    MOVE_GROUND, "Hurls magic bolts that hit everything where they land, friends too, but can't fire at close range." },
-    [UNIT_SCOUT]   = { "Scout",   BUILDING_ARCHERY_RANGE, KEY_O,   35.0f,  4.0f,  DAMAGE_PIERCE, 100.0f, 1.0f,    110.0f, 0.0f,  ARMOR_LIGHT,  60,   5.0f,      11,         false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       true,    BUILDING_NONE,    MOVE_GROUND, "A fast, far-sighted rider for finding the enemy, fragile in a fight." },
-    [UNIT_FALCON]  = { "Falcon",  BUILDING_AIR_FACTORY,   KEY_L,   45.0f,  6.0f,  DAMAGE_PIERCE,  90.0f, 0.9f,    140.0f, 0.0f,  ARMOR_LIGHT,  70,   6.0f,      9,          false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       true,    BUILDING_NONE,    MOVE_AIR,    "A very fast, fragile flyer that pecks at air and ground from a distance." },
-    [UNIT_AIRSHIP] = { "Airship", BUILDING_AIR_FACTORY,   KEY_U,  420.0f, 28.0f,  DAMAGE_BLUNT,   24.0f, 3.0f,     38.0f, 3.0f,  ARMOR_HEAVY,  300,  18.0f,     8,          false,   0.0f,     0.0f,      44.0f,  0.5f,    0.0f,     true,       false,   BUILDING_ACADEMY, MOVE_AIR,    "A slow, armored airship that bombs everything on the ground below, friends too, but can't hit flyers." },
+    //                  name       trainedAt               hotkey  hp      damage  damageType     range   cooldown  speed  armor  armorType     cost  trainTime  sight       canHeal  healRate  healRange  splash  falloff  minRange  hitsGround  hitsAir  requires          cargoCapacity  cargoSlots  moveClass    description
+    [UNIT_MELEE]   = { "Melee",   BUILDING_BARRACKS,      KEY_M,  120.0f, 12.0f,  DAMAGE_BLUNT,   16.0f, 0.8f,     75.0f, 1.0f,  ARMOR_MEDIUM, 75,   6.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       false,   BUILDING_NONE, 0,             1,          MOVE_GROUND, "A cheap, sturdy foot soldier whose mace crushes heavy armor." },
+    [UNIT_ARCHER]  = { "Archer",  BUILDING_ARCHERY_RANGE, KEY_C,   70.0f,  9.0f,  DAMAGE_PIERCE, 120.0f, 1.2f,     65.0f, 0.0f,  ARMOR_LIGHT,  100,  7.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       true,    BUILDING_NONE, 0,             1,          MOVE_GROUND, "Shoots from a distance, deadly against light armor but weak against plate." },
+    [UNIT_WORKER]  = { "Worker",  BUILDING_BASE,          KEY_W,   40.0f,  4.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  50,   5.0f,      UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       false,   BUILDING_NONE, 0,             1,          MOVE_GROUND, "Mines gold and constructs buildings, but barely fights." },
+    [UNIT_KNIGHT]  = { "Knight",  BUILDING_BARRACKS,      KEY_N,  300.0f, 18.0f,  DAMAGE_BLUNT,   16.0f, 1.0f,     55.0f, 2.0f,  ARMOR_HEAVY,  175,  10.0f,     UNIT_SIGHT, false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       false,   BUILDING_NONE, 0,             2,          MOVE_GROUND, "A slow, heavily armored soldier that hits hard and shrugs off arrows." },
+    [UNIT_MEDIC]   = { "Medic",   BUILDING_ACADEMY,       KEY_D,   60.0f,  0.0f,  DAMAGE_PIERCE,   0.0f, 0.0f,     70.0f, 0.0f,  ARMOR_LIGHT,  125,  8.0f,      UNIT_SIGHT, true,    8.0f,     64.0f,     0.0f,   0.0f,    0.0f,     false,      false,   BUILDING_NONE, 0,             1,          MOVE_GROUND, "Heals wounded allies nearby instead of attacking." },
+    [UNIT_MAGE]    = { "Mage",    BUILDING_ACADEMY,       KEY_G,   50.0f, 30.0f,  DAMAGE_MAGIC,  200.0f, 2.5f,     50.0f, 0.0f,  ARMOR_LIGHT,  200,  12.0f,     UNIT_SIGHT, false,   0.0f,     0.0f,      48.0f,  0.3f,    72.0f,    true,       true,    BUILDING_NONE, 0,             1,          MOVE_GROUND, "Hurls magic bolts that hit everything where they land, friends too, but can't fire at close range." },
+    [UNIT_SCOUT]   = { "Scout",   BUILDING_ARCHERY_RANGE, KEY_O,   35.0f,  4.0f,  DAMAGE_PIERCE, 100.0f, 1.0f,    110.0f, 0.0f,  ARMOR_LIGHT,  60,   5.0f,      11,         false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       true,    BUILDING_NONE, 0,             1,          MOVE_GROUND, "A fast, far-sighted rider for finding the enemy, fragile in a fight." },
+    [UNIT_FALCON]  = { "Falcon",  BUILDING_AIR_FACTORY,   KEY_L,   45.0f,  6.0f,  DAMAGE_PIERCE,  90.0f, 0.9f,    140.0f, 0.0f,  ARMOR_LIGHT,  70,   6.0f,      9,          false,   0.0f,     0.0f,      0.0f,   0.0f,    0.0f,     true,       true,    BUILDING_NONE, 0,             0,          MOVE_AIR,    "A very fast, fragile flyer that pecks at air and ground from a distance." },
+    [UNIT_AIRSHIP] = { "Airship", BUILDING_AIR_FACTORY,   KEY_U,  420.0f, 28.0f,  DAMAGE_BLUNT,   24.0f, 3.0f,     38.0f, 3.0f,  ARMOR_HEAVY,  450,  18.0f,     8,          false,   0.0f,     0.0f,      44.0f,  0.5f,    0.0f,     true,       false,   BUILDING_ACADEMY, 8,             0,          MOVE_AIR,    "A slow, armored airship that carries 8 slots of ground troops over anything and bombs the ground below (friends too), but can't hit flyers." },
 };
 
 // Auto-targeting leash: an idle unit that starts chasing an enemy on its own
@@ -190,6 +195,19 @@ typedef enum { STATE_MENU, STATE_PLAYING, STATE_PAUSED, STATE_VICTORY, STATE_DEF
 #define KEY_EDITOR        KEY_F2    // while playing: open the map editor on the current map
 #define KEY_DEBUG_OVERLAY KEY_F3    // show / hide the debug overlay (default: DEBUG_OVERLAY_DEFAULT in overlay.h)
 #define KEY_UNDO          KEY_Z     // with Ctrl, in the editor
+#define KEY_LOAD          KEY_L     // a transport selected: nearby idle units board it (an Air Factory selected: L trains a Falcon)
+#define KEY_UNLOAD        KEY_U     // a transport selected: unload everything below it (an Air Factory selected: U trains an Airship)
+#if defined(__EMSCRIPTEN__)
+#define KEY_UNLOAD_MODIFIER KEY_LEFT_SHIFT   // web: Ctrl is the pause key there, so Shift + right click unloads
+#else
+#define KEY_UNLOAD_MODIFIER KEY_LEFT_CONTROL // held with a right click on the ground: the transport flies there and unloads
+#endif
+
+// Transports (transport.c).
+#define TRANSPORT_BOARD_DISTANCE    28.0f  // a unit this close (world px, centre to centre) to its transport gets in
+#define TRANSPORT_LOAD_RADIUS_TILES 5      // KEY_LOAD: idle units this close are told to board
+#define TRANSPORT_UNLOAD_PER_TICK   2      // units let out per sim tick while unloading (so they don't stack)
+#define TRANSPORT_DROP_SEARCH_TILES 12     // how far from a blocked drop point it looks for open ground
 
 // Every control, for the in-game Controls screen. If `key` isn't 0, "%s" in
 // `input` is replaced by that key's name (so a remapped key shows correctly).
@@ -219,6 +237,8 @@ static const ControlInfo CONTROLS[] = {
     { CONTROLS_MOUSE,    0,                "Minimap: left / drag",   "Move the camera there" },
     { CONTROLS_MOUSE,    0,                "Minimap: right click",   "Move selected units there" },
     { CONTROLS_MOUSE,    0,                "Mouse wheel",            "Zoom (over a panel: scroll it)" },
+    { CONTROLS_MOUSE,    0,                "Right click own Airship", "Selected ground units board it" },
+    { CONTROLS_MOUSE,    KEY_UNLOAD_MODIFIER, "%s + right click",    "Airship flies there and unloads" },
     { CONTROLS_KEYBOARD, 0,                "Arrow keys",             "Pan camera" },
     { CONTROLS_KEYBOARD, KEY_ATTACK_MOVE,  "%s, then right click",   "Attack-move (fight on the way)" },
     { CONTROLS_KEYBOARD, KEY_STOP,         "%s",                     "Stop: drop all orders" },
@@ -228,6 +248,8 @@ static const ControlInfo CONTROLS[] = {
     { CONTROLS_KEYBOARD, KEY_EDITOR,       "%s",                     "Map editor on the current map" },
     { CONTROLS_KEYBOARD, KEY_DEBUG_OVERLAY,"%s",                     "Debug overlay (FPS, timings, counts)" },
     { CONTROLS_KEYBOARD, KEY_UNDO,         "Ctrl + %s (editor)",     "Undo tile painting" },
+    { CONTROLS_KEYBOARD, KEY_LOAD,         "%s (Airship selected)",  "Nearby idle units board it" },
+    { CONTROLS_KEYBOARD, KEY_UNLOAD,       "%s (Airship selected)",  "Unload everything below it" },
 };
 #define CONTROLS_COUNT ((int)(sizeof(CONTROLS)/sizeof(CONTROLS[0])))
 
@@ -257,6 +279,27 @@ static const ControlInfo CONTROLS[] = {
 #define AI_EXTRA_BARRACKS_GOLD  600             // more gold banked than this, every Barracks full: build another
 #define AI_MAX_BARRACKS         3               // cap on Barracks (finished or being built)
 #define AI_ANTI_AIR_PER_FLYER   2               // units that can hit air (hitsAir) it wants per player flyer it sees
+
+// Ferrying by Airship (ai_ferry.c). Only when NO player building can be reached
+// by ground from its army's region ("needs transport", e.g. islands); on maps
+// where the army can walk to the player none of this runs.
+#define AI_FERRY_CHECK_TICKS        10              // ferries are looked after 3x per second
+#define AI_FERRY_MAX_AIRSHIPS       3               // most Airships it ferries with at once
+#define AI_FERRY_EXTRA_AIRSHIP_GOLD 900             // gold banked above this, every Airship busy: train another
+#define AI_FERRY_GATHER_SECONDS     25              // how long it waits to fill an Airship before going with what's aboard
+#define AI_FERRY_MIN_CARGO_SLOTS    3               // ...as long as at least this many slots are full
+#define AI_FERRY_ESCORT_MIN         3               // Medics only ride along with at least this many fighters aboard...
+#define AI_FERRY_MEDICS_PER_TRIP    1               // ...and at most this many per trip
+#define AI_FERRY_DROP_SEARCH_TILES  24              // drop point: spiral search this far round the target
+#define AI_FERRY_TOWER_MARGIN_TILES 2               // ...staying this much further than a known tower's range
+#define AI_FERRY_CROWD_TILES        4               // ...and with at most AI_FERRY_CROWD_MAX enemy units this close
+#define AI_FERRY_CROWD_MAX          2
+#define AI_FERRY_DANGER_TILES       0               // an enemy that can hit air within its range + this of the drop point or the flight line: pick another
+#define AI_FERRY_ABORT_DAMAGE       0.35f           // Airship lost this share of its max HP on a trip: turn back
+#define AI_FERRY_COMMIT_TILES       10              // this close to its drop point it lands even if enemies gather there (they come to shoot at it)
+#define AI_FERRY_RETRY_SECONDS      60              // after losing an Airship, wait this long before trying again...
+#define AI_FERRY_MAX_FAILURES       3               // ...and give up ferrying after losing this many
+#define AI_FERRY_EXPANSION          0               // 1: it may also ferry a Worker to gold in another region and build a Base there
 
 // Tech buildings: after its first Barracks the AI builds one of each, in this order (each once
 // the one before is finished, and only when BuildingsCanBuild() allows it), and rebuilds them if

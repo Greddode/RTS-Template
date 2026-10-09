@@ -135,7 +135,7 @@ static float SearchRadius(const Unit *u)
 // --- Target helpers: a target is a unit or a building -------------------------
 static bool TargetAlive(bool isBuilding, int id, unsigned int serial)
 {
-    return isBuilding ? BuildingIsAlive(id, serial) : UnitIsAlive(id, serial);
+    return isBuilding ? BuildingIsAlive(id, serial) : (UnitIsAlive(id, serial) && UnitIsActiveInWorld(&units[id]));   // a unit that boarded a transport is gone
 }
 
 static bool TargetVisible(const Unit *u)
@@ -317,7 +317,7 @@ static void Splash(Vector2 at, UnitType shooter)
     {
         const Unit *t = &units[near[k]];
         float d = Vector2Distance(t->pos, at);
-        if (!t->active || d > r || !UnitCanHitUnit(shooter, t)) continue;
+        if (!UnitIsActiveInWorld(t) || d > r || !UnitCanHitUnit(shooter, t)) continue;
         float base = s->damage*(1.0f - (1.0f - s->splashFalloff)*d/r);   // full at the centre, falloff x at the edge
         DealDamage(false, near[k], CombatDamage(base, s->damageType, UNIT_STATS[t->type].armorType, UNIT_STATS[t->type].armor));
     }
@@ -482,7 +482,7 @@ void CombatBuildingTick(int id)
 
     Vector2 from = BuildingCentre(id);
     int target = b->target;
-    bool keep = b->targetSerial != 0 && UnitIsAlive(target, b->targetSerial);
+    bool keep = b->targetSerial != 0 && UnitIsAlive(target, b->targetSerial) && UnitIsActiveInWorld(&units[target]);
     if (keep)
     {
         const Unit *t = &units[target];

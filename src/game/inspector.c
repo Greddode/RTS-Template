@@ -2,7 +2,8 @@
 //
 // Shows whatever is selected (asked from input.c, which stores everything as
 // (slot, serial), so nothing here can point at a dead unit or building):
-//   one unit        type, health bar, damage / range / speed, current order
+//   one unit        type, health bar, damage / range / speed, current order;
+//                   a transport also its cargo (Load / Unload, one icon per unit inside)
 //   several units   an icon and count per type, total health
 //   a tower         its attack (damage, range, rate, ground/air) from BUILDING_STATS
 //   a building      name, health, production queue (click an icon to cancel
@@ -33,6 +34,7 @@
 #include "input.h"
 #include "minimap.h"
 #include "ui.h"
+#include "transport.h"
 #include "units.h"
 #include <stddef.h>
 
@@ -83,6 +85,8 @@ static Color HealthColor(float frac)
 
 static const char *OrderText(const Unit *u)
 {
+    if (u->boarding)     return "Boarding a transport";
+    if (u->unloading)    return "Unloading";
     if (u->healing)      return u->healOrdered ? "Healing (following)" : "Healing";
     if (u->attacking)    return u->attackTargetIsBuilding ? "Attacking building" : "Attacking";
     if (u->buildOrder)   return "Constructing";
@@ -133,6 +137,39 @@ static void SectionTitle(Rectangle panel, const char *title)
     UiLabel(title, panel.x + Ui(INFO_W) + Ui(PAD), panel.y + Ui(PAD), Ui(SMALL), LIGHTGRAY);
 }
 
+// --- A transport's cargo (right half) ------------------------------------------------
+// Load / Unload buttons (the same as KEY_LOAD / KEY_UNLOAD) and one small icon
+// button per unit inside: click one to let that unit out (if over open ground).
+static void DrawCargo(Rectangle panel, int t)
+{
+    static int cargo[TRANSPORT_MAX_CARGO];
+    int n = TransportCargo(t, cargo, TRANSPORT_MAX_CARGO);
+    int cap = UNIT_STATS[units[t].type].cargoCapacity, used = TransportUsedSlots(t);
+    SectionTitle(panel, TextFormat("Cargo  %d unit%s, %d/%d slots (%d free)", n, n == 1 ? "" : "s", used, cap, cap - used));
+
+    Rectangle area = ButtonArea(panel);
+    float half = (area.width - Ui(BUTTON_GAP))*0.5f;
+    if (half > Ui(BUTTON_W)) half = Ui(BUTTON_W);
+    Rectangle load = { area.x, area.y, half, Ui(BUTTON_H) };
+    Rectangle unload = { area.x + half + Ui(BUTTON_GAP), area.y, half, Ui(BUTTON_H) };
+    if (units[t].team != PLAYER_TEAM) return;   // an enemy transport: just the numbers
+    if (UiButtonEx(load, TextFormat("Load nearby  [%s]", UiKeyName(KEY_LOAD)), 0, used >= cap)) TransportLoadNearby(t);
+    if (UiButtonEx(unload, TextFormat("Unload all  [%s]", UiKeyName(KEY_UNLOAD)), 0, n == 0)) TransportOrderUnload(t, units[t].pos);
+
+    float s = Ui(BUTTON_H), y = area.y + s + Ui(BUTTON_GAP);
+    int out = -1;
+    for (int k = 0; k < n; k++)
+    {
+        Rectangle slot = { area.x + k*(s + Ui(4.0f)), y, s, s };
+        if (slot.x + slot.width > area.x + area.width) break;   // (8 slots of 1 fit; more would need a scroll area)
+        if (UiButton(slot, "", 0)) out = cargo[k];
+        UnitsDrawIcon(units[cargo[k]].type, units[cargo[k]].team, (Vector2){ slot.x + s*0.5f, slot.y + s*0.5f }, Ui(ICON));
+        float hpFrac = units[cargo[k]].hp/UNIT_STATS[units[cargo[k]].type].hp;   // its health, as a thin bar
+        DrawRectangleRec((Rectangle){ slot.x + 2, slot.y + s - Ui(4.0f), (slot.width - 4)*hpFrac, Ui(3.0f) }, HealthColor(hpFrac));
+    }
+    if (out != -1) TransportUnloadOne(t, out);
+}
+
 // --- One unit ---------------------------------------------------------------------
 static void DrawOneUnit(Rectangle panel, const Unit *u)
 {
@@ -153,6 +190,9 @@ static void DrawOneUnit(Rectangle panel, const Unit *u)
     UiLabel(TextFormat("Armor %g %s   Sight %d tiles", s->armor, ARMOR_TYPE_NAMES[s->armorType], s->sight), x, y, Ui(SMALL), RAYWHITE);
     y += Ui(20.0f);
     UiLabel(TextFormat("Order: %s", OrderText(u)), x, y, Ui(SMALL), GOLD);
+
+    // A transport: its cargo in the right half (instead of the splash numbers).
+    if (s->cargoCapacity > 0) { DrawCargo(panel, (int)(u - units)); return; }
 
     // Splash / minimum range, from the table, in the right half (units have no buttons there).
     if (s->splashRadius > 0.0f || s->minRange > 0.0f)
@@ -368,34 +408,38 @@ void InspectorDraw(void)
     DrawDescription(panel, hoverDescription ? hoverDescription : description);
 }
 
-// Collect every hotkey in use and warn about duplicates. Run once at startup,
-// so a buyer adding a table row with a taken letter finds out immediately.
+// Collect every hotkey in use and warn about clashes. Run once at startup, so a
+// buyer adding a table row with a taken letter finds out immediately.
+// A key may be reused where the two can never be active together: Train
+// hotkeys only work while that building is selected, and a building is never
+// selected together with units, so L / U can both train Falcons / Airships
+// (Air Factory selected) and load / unload a transport (units selected).
+#define WHEN_ALWAYS      0xFFFFFFFFu
+#define WHEN_UNITS       1u                  // units selected (commands, cargo, workers' Build keys)
+#define WHEN_BUILDING(t) (2u << (t))         // a building of that type selected (its Train keys)
+
 void InspectorCheckHotkeys(void)
 {
-    struct { int key; const char *what; } keys[64];
+    struct { int key; const char *what; unsigned int when; } keys[64];
     int n = 0;
-    keys[n].key = KEY_ATTACK_MOVE; keys[n++].what = "attack-move";
-    keys[n].key = KEY_STOP;        keys[n++].what = "stop";
-    keys[n].key = KEY_HOLD;        keys[n++].what = "hold";
-    keys[n].key = KEY_PAUSE;       keys[n++].what = "pause";
-    keys[n].key = KEY_DEBUG_WAVE;  keys[n++].what = "debug wave";
-    keys[n].key = KEY_EDITOR;      keys[n++].what = "map editor";
-    keys[n].key = KEY_DEBUG_OVERLAY; keys[n++].what = "debug overlay";
-    for (int t = 0; t < UNIT_TYPE_COUNT && n < 64; t++)
-    {
-        if (UNIT_STATS[t].trainedAt != BUILDING_NONE && UNIT_STATS[t].hotkey) { keys[n].key = UNIT_STATS[t].hotkey; keys[n++].what = UNIT_STATS[t].name; }
-    }
-    for (int t = 0; t < BUILDING_TYPE_COUNT && n < 64; t++)
-    {
-        if (BUILDING_STATS[t].cost > 0 && BUILDING_STATS[t].hotkey) { keys[n].key = BUILDING_STATS[t].hotkey; keys[n++].what = BUILDING_STATS[t].name; }
-    }
+#define ADD(k, w, ctx) do { if (n < 64) { keys[n].key = (k); keys[n].what = (w); keys[n].when = (ctx); n++; } } while (0)
+    ADD(KEY_ATTACK_MOVE, "attack-move", WHEN_UNITS);
+    ADD(KEY_STOP, "stop", WHEN_UNITS);
+    ADD(KEY_HOLD, "hold", WHEN_UNITS);
+    ADD(KEY_LOAD, "load transport", WHEN_UNITS);
+    ADD(KEY_UNLOAD, "unload transport", WHEN_UNITS);
+    ADD(KEY_PAUSE, "pause", WHEN_ALWAYS);
+    ADD(KEY_DEBUG_WAVE, "debug wave", WHEN_ALWAYS);
+    ADD(KEY_EDITOR, "map editor", WHEN_ALWAYS);
+    ADD(KEY_DEBUG_OVERLAY, "debug overlay", WHEN_ALWAYS);
+    for (int t = 0; t < UNIT_TYPE_COUNT; t++)
+        if (UNIT_STATS[t].trainedAt != BUILDING_NONE && UNIT_STATS[t].hotkey) ADD(UNIT_STATS[t].hotkey, UNIT_STATS[t].name, WHEN_BUILDING(UNIT_STATS[t].trainedAt));
+    for (int t = 0; t < BUILDING_TYPE_COUNT; t++)
+        if (BUILDING_STATS[t].cost > 0 && BUILDING_STATS[t].hotkey) ADD(BUILDING_STATS[t].hotkey, BUILDING_STATS[t].name, WHEN_UNITS);
+#undef ADD
 
     for (int i = 0; i < n; i++)
-    {
         for (int j = i + 1; j < n; j++)
-        {
-            if (keys[i].key == keys[j].key)
+            if (keys[i].key == keys[j].key && (keys[i].when & keys[j].when))
                 TraceLog(LOG_WARNING, "HOTKEY CONFLICT: %s and %s both use %s", keys[i].what, keys[j].what, UiKeyName(keys[i].key));
-        }
-    }
 }

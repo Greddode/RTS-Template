@@ -36,7 +36,7 @@ static unsigned int healedStamp[MAX_UNITS];      // tick each unit was last heal
 
 bool UnitNeedsHealing(int id)
 {
-    return id >= 0 && id < MAX_UNITS && units[id].active && units[id].hp < UNIT_STATS[units[id].type].hp;
+    return id >= 0 && id < MAX_UNITS && UnitIsActiveInWorld(&units[id]) && units[id].hp < UNIT_STATS[units[id].type].hp;
 }
 
 void HealBeginTick(void)
@@ -206,7 +206,7 @@ void HealDraw(Rectangle view, float alpha)
     for (int k = 0; k < count; k++)
     {
         const Unit *u = &units[near[k]];
-        if (!u->healing || !UnitIsAlive(u->healTarget, u->healTargetSerial)) continue;
+        if (!u->healing || !UnitIsAlive(u->healTarget, u->healTargetSerial) || !UnitIsActiveInWorld(&units[u->healTarget])) continue;
         const Unit *p = &units[u->healTarget];
         if (Vector2Distance(u->pos, p->pos) > UNIT_STATS[u->type].healRange) continue;   // still walking there
         if (!FogCanSee(PLAYER_TEAM, u->pos) || !FogCanSee(PLAYER_TEAM, p->pos)) continue;

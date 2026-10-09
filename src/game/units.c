@@ -53,6 +53,7 @@
 #include "map.h"
 #include "path.h"
 #include "sprites.h"
+#include "transport.h"
 #include "raymath.h"
 #include <float.h>
 #include <math.h>
@@ -115,6 +116,9 @@ int UnitSpawn(Vector2 pos, UnitType type, int team)
 void UnitDespawn(int id)
 {
     if (!units[id].active) return;
+    if (IsTransport(id)) TransportDestroyed(id);   // first, while its serial still identifies its cargo
+    units[id].loaded = false;
+    units[id].boarding = false;
     units[id].active = false;
     units[id].selected = false;
     units[id].moving = false;
@@ -262,25 +266,28 @@ void UnitsTick(void)
     {
         Unit *u = &units[i];
         if (!u->active) continue;
+        if (u->loaded) { TransportCargoTick(i); continue; }   // rides in a transport: nothing else
 
         u->prevPos = u->pos;
         if (u->cooldownTicks > 0) u->cooldownTicks--;
 
         Vector2 step = { 0 };
         bool gathering = (u->gatherState != GATHER_NONE);
-        bool busy = u->attacking || gathering || u->buildOrder || u->healing;
+        bool busy = u->attacking || gathering || u->buildOrder || u->healing || u->boarding || u->unloading;
         if (!busy && (!u->moving || u->attackMove))   // look for enemies (or, for healers, damaged allies)
         {
             if (UNIT_STATS[u->type].canHeal) HealAcquireTick(i);
             else CombatAcquireTick(i);
         }
-        if (u->healing) step = HealUnitTick(i);
+        if (u->boarding) step = TransportBoardTick(i);   // may load it (then it's out of the world)
+        else if (u->healing) step = HealUnitTick(i);
         else if (u->attacking) step = CombatUnitTick(i);   // may kill other units
         else if (gathering) step = EconomyWorkerTick(i);
         else if (u->buildOrder) step = BuildingsWorkerTick(i);
         else if (u->moving) step = UnitFollowPath(i);
 
-        if (!u->active) continue;
+        if (u->unloading) TransportTick(i);
+        if (!u->active || u->loaded) continue;
         // Face the way the unit wants to go. Separation pushes are left out, so
         // a unit jostled in a crowd doesn't flicker left and right.
         if (step.x < -FACING_MIN_STEP) u->facingLeft = true;
@@ -491,6 +498,8 @@ static void OrderMoveGroup(const int *ids, int count, Vector2 dest, MoveClass mo
         units[id].buildOrder = false;
         units[id].leashed = false;
         units[id].healing = false;
+        units[id].boarding = false;
+        units[id].unloading = false;
         UnitMoveTo(id, (k < found) ? spots[spotOrder[k]] : dest);   // more units than open spots: rare
     }
 }
@@ -528,6 +537,8 @@ static void SetAttackTarget(int id, int target, unsigned int serial, bool isBuil
     u->gatherState = GATHER_NONE;
     u->buildOrder = false;
     u->leashed = false;   // an order; combat.c re-sets it for auto-targeting
+    u->boarding = false;
+    u->unloading = false;
     u->attacking = true;
     u->attackTargetIsBuilding = isBuilding;
     u->attackTarget = target;
@@ -611,6 +622,8 @@ void UnitsOrderStop(const int *ids, int count)
         u->buildOrder = false;
         u->leashed = false;
         u->healing = false;
+        u->boarding = false;
+        u->unloading = false;
     }
 }
 

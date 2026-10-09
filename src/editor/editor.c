@@ -173,7 +173,7 @@ void EditorOpenFromGame(void)
             MapObject o = { 0 };
             if (pass == 0) { if (!buildings[i].active) continue; o = (MapObject){ MAPOBJ_BUILDING, buildings[i].type, buildings[i].team, buildings[i].tx, buildings[i].ty, 0, 0 }; }
             if (pass == 1) { if (!goldNodes[i].active) continue; o = (MapObject){ MAPOBJ_GOLD, 0, 0, (int)(goldNodes[i].pos.x/TILE_SIZE), (int)(goldNodes[i].pos.y/TILE_SIZE), goldNodes[i].amount, 0 }; }
-            if (pass == 2) { if (!units[i].active) continue; o = (MapObject){ MAPOBJ_UNIT, units[i].type, units[i].team, (int)(units[i].pos.x/TILE_SIZE), (int)(units[i].pos.y/TILE_SIZE), 0, 0 }; }
+            if (pass == 2) { if (!UnitIsActiveInWorld(&units[i])) continue; o = (MapObject){ MAPOBJ_UNIT, units[i].type, units[i].team, (int)(units[i].pos.x/TILE_SIZE), (int)(units[i].pos.y/TILE_SIZE), 0, 0 }; }   // units inside a transport aren't copied (maps hold no cargo)
             if (MapDocObjectFits(&doc, &o, -1)) doc.objects[doc.objectCount++] = o;
             else skipped++;
         }

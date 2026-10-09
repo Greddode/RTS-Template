@@ -148,7 +148,7 @@ static void DrawDots(Rectangle area, float scale)
     for (int i = 0; i < MAX_UNITS; i++)
     {
         const Unit *u = &units[i];
-        if (!u->active) continue;
+        if (!UnitIsActiveInWorld(u)) continue;   // no dot for units inside a transport
         if (u->team != PLAYER_TEAM && !FogCanSee(PLAYER_TEAM, u->pos)) continue;   // enemies: only where visible
         Dot(area, scale, u->pos, unitSize, (u->team == PLAYER_TEAM) ? PLAYER_DOT : AI_DOT);
     }

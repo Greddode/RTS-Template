@@ -30,6 +30,11 @@
 //   4. Idle units: workers go to the gold node near their base with the
 //      fewest workers on it; combat units attack the nearest player unit (or
 //      building, or march on the player's base).
+//   5. Ferrying (ai_ferry.c): when no player building can be reached on foot
+//      (the player is on another island), it builds an Academy, an Air
+//      Factory and Airships and flies groups of its army over. Idle units are
+//      then only sent at targets they can walk to. On maps where the army can
+//      walk to the player this never runs.
 // Separately, every AI_TRAIN_TICKS it queues combat units: each time the type
 // furthest below its share in AI_ARMY_MIX (army alive + queued), at a building
 // that trains it and has room, until the queues are full or the gold runs out
@@ -48,12 +53,14 @@
 // serial pairs (Barracks, expansion site, builder, node) and fixed arrays.
 
 #include "ai.h"
+#include "ai_internal.h"
 #include "config.h"
 #include "buildings.h"
 #include "economy.h"
 #include "fog.h"
 #include "grid.h"
 #include "path.h"
+#include "transport.h"
 #include "units.h"
 #include "raymath.h"
 #include <stdarg.h>
@@ -72,6 +79,8 @@ static bool         savingForTech = false;
 
 // Expansion in progress (one at a time).
 static bool         expanding = false, savingForExpansion = false;
+static bool         ferryExpansion = false;   // a Worker is being ferried to build a Base (AI_FERRY_EXPANSION)
+static int          fieldRegion;              // expansion fields must be in this ground region (0: any OTHER than home, for the ferry)
 static int          expSite, expBuilder;
 static unsigned int expSiteSerial, expBuilderSerial;
 static unsigned int expField[MAX_GOLD_NODES];   // serials of the field's nodes (forgotten if it fails)
@@ -133,9 +142,18 @@ static int NearestDropOff(Vector2 p, float maxDist)
     return best;
 }
 
+static int NearestDropOff(Vector2 p, float maxDist);
 static bool NodeUsable(int n)
 {
-    return goldNodes[n].active && goldNodes[n].amount > 0 && PathRegion(MOVE_GROUND, goldNodes[n].pos) == homeRegion;
+    if (!goldNodes[n].active || goldNodes[n].amount <= 0) return false;
+    int r = PathRegion(MOVE_GROUND, goldNodes[n].pos);
+    if (r == homeRegion) return true;
+#if AI_FERRY_EXPANSION
+    // A Base ferried to another island mines the gold in its own region.
+    int base = NearestDropOff(goldNodes[n].pos, AI_NODE_RANGE_TILES*TILE_SIZE);
+    if (base != -1 && PathRegion(MOVE_GROUND, buildings[base].rally) == r) return true;
+#endif
+    return false;
 }
 
 // The base a node belongs to: the nearest drop-off within AI_NODE_RANGE_TILES.
@@ -200,7 +218,7 @@ static int ScanBuilders(int site, bool *beingBuilt, int *freeWorker)
     for (int i = 0; i < MAX_UNITS; i++)
     {
         const Unit *u = &units[i];
-        if (!u->active || u->team != AI_TEAM || u->type != UNIT_WORKER) continue;
+        if (!UnitIsActiveInWorld(u) || u->team != AI_TEAM || u->type != UNIT_WORKER) continue;
         workers++;
         if (u->buildOrder && site != -1 && u->buildSite == site) *beingBuilt = true;
         else if (*freeWorker == -1 && !u->buildOrder) *freeWorker = i;
@@ -292,6 +310,7 @@ static void TechTick(void)
 {
     techNote[0] = '\0';
     savingForTech = false;
+    if (AiFerryBuilding()) return;   // getting the Academy / Air Factory for the ferry comes first
     if (!HaveFinishedBarracks()) return;   // the Barracks comes first
     int anchor = AnchorBase();
     if (anchor == -1) return;
@@ -355,7 +374,7 @@ static void WorkerTick(void)
     for (int i = 0; i < MAX_UNITS; i++)
     {
         const Unit *u = &units[i];
-        if (!u->active || u->team != AI_TEAM || u->type != UNIT_WORKER) continue;
+        if (!UnitIsActiveInWorld(u) || u->team != AI_TEAM || u->type != UNIT_WORKER) continue;
         workers++;
         bool mining = (u->gatherState != GATHER_NONE && EconomyNodeIsAlive(u->gatherNode, u->gatherNodeSerial));
         if (mining) gatherers[u->gatherNode]++;
@@ -457,7 +476,8 @@ static void FieldAround(int seed, GoldField *f)
 // no enemy building near.
 static bool FieldWorthIt(int seed, GoldField *f)
 {
-    if (!NodeFree(seed) || PathRegion(MOVE_GROUND, goldNodes[seed].pos) != homeRegion) return false;
+    int r = PathRegion(MOVE_GROUND, goldNodes[seed].pos);
+    if (!NodeFree(seed) || (fieldRegion ? r != fieldRegion : (r == 0 || r == homeRegion))) return false;
     FieldAround(seed, f);
     return f->gold >= AI_EXPAND_MIN_GOLD && BuildingsFindNearestEnemy(f->centre, AI_EXPAND_ENEMY_TILES*TILE_SIZE, AI_TEAM) == -1;
 }
@@ -468,6 +488,7 @@ static bool FieldWorthIt(int seed, GoldField *f)
 static bool FindExpansionField(Vector2 from, GoldField *best)
 {
     static GoldField f;
+    fieldRegion = homeRegion;   // the normal case: gold the workers can walk to
     MarkFreeNodes();
     int nearest = -1;
     float nearestDist = 0.0f;
@@ -494,13 +515,14 @@ static bool FindExpansionField(Vector2 from, GoldField *best)
 static bool FieldBaseSpot(const GoldField *f, Vector2 *out)
 {
     int cx = (int)(f->centre.x/TILE_SIZE), cy = (int)(f->centre.y/TILE_SIZE), r = AI_FIELD_TILES + 4;
+    int region = fieldRegion ? fieldRegion : PathRegion(MOVE_GROUND, goldNodes[f->nodes[0]].pos);
     float bestScore = 0.0f;
     bool found = false, bestAllInRange = false;
     for (int ty = cy - r; ty <= cy + r; ty++)
         for (int tx = cx - r; tx <= cx + r; tx++)
         {
             Vector2 p = { (tx + 0.5f)*TILE_SIZE, (ty + 0.5f)*TILE_SIZE };
-            if (!BuildingCanPlace(BUILDING_BASE, p) || PathRegion(MOVE_GROUND, p) != homeRegion) continue;
+            if (!BuildingCanPlace(BUILDING_BASE, p) || PathRegion(MOVE_GROUND, p) != region) continue;
             Rectangle rect = BuildingFootprint(BUILDING_BASE, p);
             bool tooClose = false;
             for (int n = 0; n < MAX_GOLD_NODES && !tooClose; n++)
@@ -569,11 +591,25 @@ static void ExpandTick(void)
     expandNote[0] = '\0';
     savingForExpansion = false;
     if (expanding) { WatchExpansion(); return; }   // this check is spent watching it (or giving up)
+    if (ferryExpansion) { Note(expandNote, sizeof(expandNote), "Ferrying a Worker to build a Base"); return; }
 
     int anchor = AnchorBase();
     if (anchor == -1 || CountOurBases() >= AI_MAX_BASES) return;
     static GoldField field;
-    if (!FindExpansionField(BuildingCentre(anchor), &field)) return;   // nothing qualifies: don't expand
+    if (!FindExpansionField(BuildingCentre(anchor), &field))   // nothing qualifies: don't expand...
+    {
+#if AI_FERRY_EXPANSION
+        // ...unless an idle Airship can carry a Worker to gold on another island.
+        Vector2 spot;
+        int region;
+        if (AiFerryHasIdleShip() && EconomyGold(AI_TEAM) >= BUILDING_STATS[BUILDING_BASE].cost + AI_EXPAND_RESERVE && AiFindFerryField(&spot, &region))
+        {
+            int worker = AiFreeWorker(-1, &(bool){ false });
+            if (worker != -1 && AiFerryExpand(worker, spot)) { ferryExpansion = true; Note(expandNote, sizeof(expandNote), "Ferrying a Worker to gold at %d,%d", (int)(spot.x/TILE_SIZE), (int)(spot.y/TILE_SIZE)); }
+        }
+#endif
+        return;
+    }
 
     int cost = BUILDING_STATS[BUILDING_BASE].cost;
     bool runningLow = OwnGoldLeft() < AI_EXPAND_LOW_GOLD;
@@ -607,7 +643,7 @@ static void ExpandTick(void)
     for (int i = 0; i < MAX_UNITS; i++)
     {
         const Unit *u = &units[i];
-        if (!u->active || u->team != AI_TEAM || u->type != UNIT_WORKER || u->buildOrder) continue;
+        if (!UnitIsActiveInWorld(u) || u->team != AI_TEAM || u->type != UNIT_WORKER || u->buildOrder) continue;
         float d = Vector2Distance(u->pos, spot);
         if (builder == -1 || d < bestDist) { bestDist = d; builder = i; }
     }
@@ -666,7 +702,7 @@ static void TrainTick(void)
         const Unit *u = &units[i];
         if (!u->active) continue;
         if (u->team == AI_TEAM) have[u->type]++;
-        else if (UnitIsFlying(u) && FogCanSee(AI_TEAM, u->pos)) playerFlyers++;
+        else if (UnitIsActiveInWorld(u) && UnitIsFlying(u) && FogCanSee(AI_TEAM, u->pos)) playerFlyers++;
     }
     for (int b = 0; b < MAX_BUILDINGS; b++)
         if (buildings[b].active && buildings[b].team == AI_TEAM)
@@ -674,7 +710,7 @@ static void TrainTick(void)
     for (int t = 0; t < UNIT_TYPE_COUNT; t++) if (HitsAir(t)) antiAir += have[t];
     bool wantAntiAir = antiAir < playerFlyers*AI_ANTI_AIR_PER_FLYER;
 
-    if ((savingForExpansion || savingForTech) && !wantAntiAir) return;   // gold is going into a building
+    if ((savingForExpansion || savingForTech || AiFerrySaving()) && !wantAntiAir) return;   // gold is going into a building (or an Airship)
 
     // Again and again: the type furthest below its share in AI_ARMY_MIX (not at
     // its cap, and with a building that can take it). If it can't be paid for,
@@ -765,12 +801,56 @@ void AiInit(Vector2 base, Vector2 spawn, int baseBuilding)
     failedCount = 0;
     workerCount = workerTarget = baseCount = 0;
     barracksNote[0] = techNote[0] = workerNote[0] = expandNote[0] = '\0';
+    ferryExpansion = false;
+    AiFerryReset();
     if (baseBuilding >= 0) RallyTowardNode(baseBuilding);
+}
+
+// --- Shared with ai_ferry.c (ai_internal.h) ---------------------------------------------------
+int     AiAnchorBase(void) { return AnchorBase(); }
+int     AiFindOwn(BuildingType type) { return FindOwn(type); }
+int     AiFreeWorker(int site, bool *siteBeingBuilt) { int w; ScanBuilders(site, siteBeingBuilt, &w); return w; }
+int     AiStartSite(BuildingType type, int worker, int anchor) { return StartSite(type, worker, anchor); }
+int     AiHomeRegion(void) { return homeRegion; }
+Vector2 AiPlayerBase(void) { return playerBase; }
+
+void AiFerryExpansionStarted(int site, int builder)
+{
+    ferryExpansion = false;
+    expanding = true;
+    expSite = site;       expSiteSerial = buildings[site].serial;
+    expBuilder = builder; expBuilderSerial = units[builder].serial;
+    expFieldCount = 0;
+}
+
+void AiFerryExpansionFailed(void) { ferryExpansion = false; }
+
+bool AiFindFerryField(Vector2 *spot, int *region)
+{
+    int anchor = AnchorBase();
+    if (anchor == -1) return false;
+    static GoldField field, f;
+    MarkFreeNodes();
+    fieldRegion = 0;   // any region but home
+    bool found = false;
+    float best = 0.0f;
+    Vector2 from = BuildingCentre(anchor);
+    for (int n = 0; n < MAX_GOLD_NODES; n++)
+    {
+        if (!FieldWorthIt(n, &f)) continue;
+        float d = Vector2Distance(from, f.centre);
+        if (!found || d < best) { found = true; best = d; field = f; }
+    }
+    if (found) found = FieldBaseSpot(&field, spot);
+    if (found) *region = PathRegion(MOVE_GROUND, *spot);
+    fieldRegion = homeRegion;
+    return found;
 }
 
 void AiTick(void)
 {
     TrainTick();
+    AiFerryTick();
     if (--thinkCountdown > 0) return;
     thinkCountdown = AI_THINK_TICKS;
     thinkStamp++;
@@ -781,6 +861,7 @@ void AiTick(void)
     baseCount = CountOurBases();
 
     BarracksTick();
+    AiFerryThink(anchor);   // nothing happens unless the player can't be reached on foot
     TechTick();
     WorkerTick();
     expandCountdown -= AI_THINK_TICKS;
@@ -793,7 +874,8 @@ void AiTick(void)
     for (int i = 0; i < MAX_UNITS; i++)
     {
         Unit *u = &units[i];
-        if (!u->active || u->team != AI_TEAM || u->moving || u->attacking || u->gatherState != GATHER_NONE || u->buildOrder) continue;
+        if (!UnitIsActiveInWorld(u) || u->team != AI_TEAM || u->moving || u->attacking || u->gatherState != GATHER_NONE || u->buildOrder) continue;
+        if (u->boarding || AiFerryOwns(i)) continue;   // the ferry logic has these
 
         if (u->type == UNIT_WORKER)
         {
@@ -805,6 +887,12 @@ void AiTick(void)
         int target = NearestPlayerUnit(u->pos, u->type);   // only ones it can hit (no Knights sent after Falcons)
         bool hitsBuildings = UnitCanHitBuildings(u->type) || UNIT_STATS[u->type].damage <= 0.0f;   // healers go along anyway
         int building = (target == -1 && hitsBuildings) ? BuildingsFindNearestEnemy(u->pos, (float)(MAP_PIXEL_W + MAP_PIXEL_H), AI_TEAM) : -1;
+        if (AiFerryNeedsTransport())   // across the water: only send it where it can walk; the rest waits for an Airship
+        {
+            if (target != -1 && !AiFerryCanReach(u->pos, units[target].pos)) target = -1;
+            if (target == -1 && building != -1 && !AiFerryCanReach(u->pos, BuildingApproachPoint(building, u->pos, u->radius, MOVE_GROUND))) building = -1;
+            if (target == -1 && building == -1) continue;
+        }
         if (target != -1) UnitsOrderAttack(&i, 1, target);
         else if (building != -1) UnitsOrderAttackBuilding(&i, 1, building);
         else toBase[toBaseCount++] = i;
@@ -829,6 +917,7 @@ const char *AiDebugLine(void)
 
 const char *AiStatus(void)
 {
+    if (AiFerryStatus()[0]) return AiFerryStatus();
     if (expandNote[0]) return expandNote;
     if (barracksNote[0]) return barracksNote;
     if (techNote[0]) return techNote;

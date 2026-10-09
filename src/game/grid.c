@@ -10,7 +10,8 @@
 // The grid is rebuilt from scratch once per sim tick. For a few thousand units
 // that's cheap, and much simpler than tracking units moving between cells.
 // Units that die during a tick stay listed until the next rebuild, so every
-// query skips inactive units.
+// query skips inactive units. Units inside a transport aren't listed at all
+// (UnitIsActiveInWorld), so every grid search ignores them.
 
 #include "grid.h"
 #include "units.h"
@@ -33,7 +34,7 @@ void GridRebuild(void)
 
     for (int i = 0; i < MAX_UNITS; i++)
     {
-        if (!units[i].active) continue;
+        if (!UnitIsActiveInWorld(&units[i])) continue;   // loaded units aren't in the world
         int cell = CellCoord(units[i].pos.y, GRID_H)*GRID_W + CellCoord(units[i].pos.x, GRID_W);
         nextInCell[i] = cellHead[cell];
         cellHead[cell] = i;
@@ -52,7 +53,7 @@ int GridQuery(Rectangle area, int *out, int maxOut)
         {
             for (int i = cellHead[cy*GRID_W + cx]; i != -1; i = nextInCell[i])
             {
-                if (!units[i].active || !CheckCollisionPointRec(units[i].pos, area)) continue;
+                if (!UnitIsActiveInWorld(&units[i]) || !CheckCollisionPointRec(units[i].pos, area)) continue;
                 if (count == maxOut) return count;
                 out[count++] = i;
             }
@@ -67,7 +68,7 @@ static void CheckCellForEnemy(int cx, int cy, Vector2 pos, int myTeam, bool grou
     if (cx < 0 || cy < 0 || cx >= GRID_W || cy >= GRID_H) return;
     for (int i = cellHead[cy*GRID_W + cx]; i != -1; i = nextInCell[i])
     {
-        if (!units[i].active || units[i].team == myTeam) continue;
+        if (!UnitIsActiveInWorld(&units[i]) || units[i].team == myTeam) continue;
         if (!(UnitIsFlying(&units[i]) ? air : ground)) continue;   // e.g. a flyer, for a melee attacker
         if (!FogCanSee(myTeam, units[i].pos)) continue;   // can't target what it can't see
         if (units[i].hp <= units[i].incomingDamage) continue;   // already doomed by projectiles in flight
