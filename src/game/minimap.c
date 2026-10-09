@@ -145,7 +145,7 @@ static void DrawDots(Rectangle area, float scale)
         DrawRectangleRec((Rectangle){ p.x, p.y, s, s }, (bd->team == PLAYER_TEAM) ? PLAYER_DOT : AI_DOT);
     }
     // A loop over the pool once per frame to draw dots, like UnitsTick - not a "who's nearby" search.
-    for (int i = 0; i < MAX_UNITS; i++)
+    for (int i = 0; i < UnitsPoolEnd(); i++)
     {
         const Unit *u = &units[i];
         if (!UnitIsActiveInWorld(u)) continue;   // no dot for units inside a transport

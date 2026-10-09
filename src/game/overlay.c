@@ -69,7 +69,7 @@ void OverlayUpdate(void)
     {
         nextRefresh = now + OVERLAY_REFRESH;
         teamUnits[PLAYER_TEAM] = teamUnits[AI_TEAM] = 0;
-        for (int i = 0; i < MAX_UNITS; i++) if (units[i].active) teamUnits[units[i].team == AI_TEAM]++;
+        for (int i = 0; i < UnitsPoolEnd(); i++) if (units[i].active) teamUnits[units[i].team == AI_TEAM]++;
         teamBuildings[PLAYER_TEAM] = BuildingsCount(PLAYER_TEAM);
         teamBuildings[AI_TEAM] = BuildingsCount(AI_TEAM);
     }

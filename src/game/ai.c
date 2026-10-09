@@ -215,7 +215,7 @@ static int ScanBuilders(int site, bool *beingBuilt, int *freeWorker)
     int workers = 0;
     *beingBuilt = false;
     *freeWorker = -1;
-    for (int i = 0; i < MAX_UNITS; i++)
+    for (int i = 0; i < UnitsPoolEnd(); i++)
     {
         const Unit *u = &units[i];
         if (!UnitIsActiveInWorld(u) || u->team != AI_TEAM || u->type != UNIT_WORKER) continue;
@@ -373,7 +373,7 @@ static void WorkerTick(void)
     int homeCount[MAX_BUILDINGS] = { 0 };
     int workers = 0;
     for (int n = 0; n < MAX_GOLD_NODES; n++) gatherers[n] = 0;
-    for (int i = 0; i < MAX_UNITS; i++)
+    for (int i = 0; i < UnitsPoolEnd(); i++)
     {
         const Unit *u = &units[i];
         if (!UnitIsActiveInWorld(u) || u->team != AI_TEAM || u->type != UNIT_WORKER) continue;
@@ -642,7 +642,7 @@ static void ExpandTick(void)
     // The nearest worker that isn't building something.
     int builder = -1;
     float bestDist = 0.0f;
-    for (int i = 0; i < MAX_UNITS; i++)
+    for (int i = 0; i < UnitsPoolEnd(); i++)
     {
         const Unit *u = &units[i];
         if (!UnitIsActiveInWorld(u) || u->team != AI_TEAM || u->type != UNIT_WORKER || u->buildOrder) continue;
@@ -699,7 +699,7 @@ static void TrainTick(void)
     // A pass over the pool every 5 s is cheap (it isn't a "who's nearby" search).
     int have[UNIT_TYPE_COUNT] = { 0 };
     int playerFlyers = 0, antiAir = 0;
-    for (int i = 0; i < MAX_UNITS; i++)
+    for (int i = 0; i < UnitsPoolEnd(); i++)
     {
         const Unit *u = &units[i];
         if (!u->active) continue;
@@ -874,7 +874,7 @@ void AiTick(void)
     // "who's nearby" search, those go through the grid.
     static int toBase[MAX_UNITS];
     int toBaseCount = 0;
-    for (int i = 0; i < MAX_UNITS; i++)
+    for (int i = 0; i < UnitsPoolEnd(); i++)
     {
         Unit *u = &units[i];
         if (!UnitIsActiveInWorld(u) || u->team != AI_TEAM || u->moving || u->attacking || u->gatherState != GATHER_NONE || u->buildOrder) continue;
@@ -905,6 +905,19 @@ void AiSpawnWave(int count)
     if (count > MAX_UNITS) count = MAX_UNITS;
     int found = UnitsOpenSpots(MOVE_GROUND, aiSpawn, count, spots);   // Melee and Archers: ground units
     for (int k = 0; k < found; k++) UnitSpawn(spots[k], (k % 2) ? UNIT_ARCHER : UNIT_MELEE, AI_TEAM);
+}
+
+void AiSpawnArmies(int perSide)
+{
+    static Vector2 spots[MAX_UNITS];
+    if (perSide > MAX_UNITS) perSide = MAX_UNITS;
+    for (int team = 0; team < 2; team++)
+    {
+        GridRebuild();   // so the spots skip units spawned just before (the other side, an earlier press)
+        int found = UnitsFreeSpots(MOVE_GROUND, team == AI_TEAM ? aiSpawn : playerBase, perSide, spots);
+        for (int k = 0; k < found; k++) UnitSpawn(spots[k], DEBUG_ARMY_MIX[k % DEBUG_ARMY_MIX_COUNT], team);
+    }
+    GridRebuild();
 }
 
 const char *AiDebugLine(void)

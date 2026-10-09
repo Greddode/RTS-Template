@@ -121,6 +121,7 @@ typedef struct Projectile {
 
 static Projectile projectiles[MAX_PROJECTILES];
 static int projectileCount = 0;
+static int projectileEnd = 0;   // one past the highest slot in use: the loops stop here (like UnitsPoolEnd)
 static bool poolFullLogged = false;
 
 // Expanding rings where bolts landed (visual only).
@@ -294,7 +295,12 @@ static bool AttackNearest(int id, float radius)
 static Projectile *NewProjectile(void)
 {
     for (int i = 0; i < MAX_PROJECTILES; i++)
-        if (!projectiles[i].active) { projectileCount++; return &projectiles[i]; }
+        if (!projectiles[i].active)
+        {
+            projectileCount++;
+            if (i + 1 > projectileEnd) projectileEnd = i + 1;
+            return &projectiles[i];
+        }
     if (!poolFullLogged)
     {
         TraceLog(LOG_WARNING, "COMBAT: projectile pool full (MAX_PROJECTILES %d) - shots are skipped until some land", MAX_PROJECTILES);
@@ -537,7 +543,7 @@ void CombatProjectilesTick(void)
         if (splashFx[i].active && ++splashFx[i].age >= SPLASH_FX_TICKS) splashFx[i].active = false;
 
     float maxStep = PROJECTILE_SPEED*TICK_DT, boltStep = BOLT_SPEED*TICK_DT;
-    for (int i = 0; i < MAX_PROJECTILES; i++)
+    for (int i = 0; i < projectileEnd; i++)
     {
         Projectile *p = &projectiles[i];
         if (!p->active) continue;
@@ -576,13 +582,14 @@ void CombatProjectilesTick(void)
         p->active = false;
         projectileCount--;
     }
+    while (projectileEnd > 0 && !projectiles[projectileEnd - 1].active) projectileEnd--;   // the top slots are free now
 }
 
 // Arrows, bolts (with a short trail of dots) and splash rings: all plain
 // circles and rings, so one batch. Only what the camera and the player see.
 void CombatProjectilesDraw(Rectangle view, float alpha)
 {
-    for (int i = 0; i < MAX_PROJECTILES; i++)
+    for (int i = 0; i < projectileEnd; i++)
     {
         const Projectile *p = &projectiles[i];
         if (!p->active) continue;
@@ -621,4 +628,5 @@ void CombatReset(void)
     memset(projectiles, 0, sizeof(projectiles));
     memset(splashFx, 0, sizeof(splashFx));
     projectileCount = 0;
+    projectileEnd = 0;
 }

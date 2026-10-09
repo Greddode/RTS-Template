@@ -197,7 +197,7 @@ static int QueuedAirships(int factory)
 // Our Airships the ferry isn't using yet (just trained, or given by the map) become ferries.
 static void ClaimAirships(void)
 {
-    for (int i = 0; i < MAX_UNITS && ferryCount < AI_FERRY_MAX_AIRSHIPS; i++)
+    for (int i = 0; i < UnitsPoolEnd() && ferryCount < AI_FERRY_MAX_AIRSHIPS; i++)
     {
         const Unit *u = &units[i];
         if (!UnitIsActiveInWorld(u) || u->team != AI_TEAM || !IsTransport(i) || AiFerryOwns(i)) continue;
@@ -278,12 +278,12 @@ static void Gather(Ferry *f)
     static float dist[MAX_UNITS];
     int ship = f->ship, home = AiHomeRegion();
     int free = TransportFreeSlots(ship);
-    for (int i = 0; i < MAX_UNITS; i++)   // those already walking to it count
+    for (int i = 0; i < UnitsPoolEnd(); i++)   // those already walking to it count
         if (units[i].active && units[i].boarding && units[i].transport == ship && units[i].transportSerial == f->serial) free -= UNIT_STATS[units[i].type].cargoSlots;
     if (free <= 0) return;
 
     int n = 0, fighters = 0;
-    for (int i = 0; i < MAX_UNITS; i++)
+    for (int i = 0; i < UnitsPoolEnd(); i++)
     {
         const Unit *u = &units[i];
         if (!UnitIsActiveInWorld(u) || u->team != AI_TEAM || !Idle(u)) continue;
@@ -306,7 +306,7 @@ static void Gather(Ferry *f)
     int aboard = TransportCargo(ship, aboardIds, TRANSPORT_MAX_CARGO);
     if (fighters + aboard < AI_FERRY_ESCORT_MIN) return;   // Medics only escort a real group
     int medics = 0;
-    for (int i = 0; i < MAX_UNITS && free > 0 && medics < AI_FERRY_MEDICS_PER_TRIP; i++)
+    for (int i = 0; i < UnitsPoolEnd() && free > 0 && medics < AI_FERRY_MEDICS_PER_TRIP; i++)
     {
         const Unit *u = &units[i];
         if (!UnitIsActiveInWorld(u) || u->team != AI_TEAM || !Idle(u) || !UNIT_STATS[u->type].canHeal) continue;
@@ -437,7 +437,7 @@ static void Launch(Ferry *f)
     if (!FindDrop(f->target, f->targetRegion, units[f->ship].pos, &drop)) { snprintf(status, sizeof(status), "Ferry: no safe drop point"); return; }
     static int c[TRANSPORT_MAX_CARGO];
     f->cargoAtStart = TransportCargo(f->ship, c, TRANSPORT_MAX_CARGO);
-    for (int i = 0; i < MAX_UNITS; i++)   // anyone still walking to it misses this trip
+    for (int i = 0; i < UnitsPoolEnd(); i++)   // anyone still walking to it misses this trip
         if (units[i].active && units[i].boarding && units[i].transport == f->ship && units[i].transportSerial == f->serial) { units[i].boarding = false; UnitStop(i); }
     if (!TransportOrderUnload(f->ship, drop)) return;
     f->drop = drop;

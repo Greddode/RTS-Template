@@ -6,13 +6,20 @@
 #include "config.h"
 #include <stdbool.h>
 
-#define MAX_UNITS   2048
+// The unit pool. Every array that holds "one entry per unit" (path results,
+// grid links, selection, scratch lists) is sized from this, so raising it is
+// one edit. Cost: about 0.7 KB of memory per slot, used or not (NOTES.md
+// has the table), and loops over the whole pool (the tick, fog, minimap)
+// skip free slots quickly. 16,384 measured on the target laptop: README.
+#define MAX_UNITS   16384
 #define UNIT_RADIUS 6.0f    // world pixels
 
 typedef enum { GATHER_NONE, GATHER_TO_NODE, GATHER_MINING, GATHER_TO_BASE } GatherState;
 
 typedef struct Unit {
     bool         active;      // false = free slot in the pool
+    bool         loaded;      // inside a transport (transport.c): still in the pool, but out of the world (UnitIsActiveInWorld).
+                              // Next to `active` on purpose: every grid query reads both, and together they're one memory fetch.
     unsigned int serial;      // unique per spawn: tells a reused slot apart from the unit that died in it
     UnitType     type;
     int          team;
@@ -70,7 +77,7 @@ typedef struct Unit {
     unsigned int healTargetSerial;    // ...and serial
 
     // Transports (transport.c)
-    bool         loaded;              // inside a transport: still in the pool, but out of the world (UnitIsActiveInWorld)
+    // (`loaded` is at the top of the struct, next to `active`)
     bool         boarding;            // walking to `transport` to get in
     int          transport;           // the transport it's in or boarding: slot...
     unsigned int transportSerial;     // ...and serial
@@ -79,6 +86,13 @@ typedef struct Unit {
 } Unit;
 
 extern Unit units[MAX_UNITS];
+
+// One past the highest slot in use: every slot from here up is free. Loops
+// over the pool stop here instead of at MAX_UNITS, so a big MAX_UNITS costs
+// nothing in a small game (UnitSpawn always takes the lowest free slot, so
+// units stay packed at the start). Read-only outside units.c.
+extern int unitPoolEnd;
+static inline int UnitsPoolEnd(void) { return unitPoolEnd; }
 
 // THE test for "this unit takes part in the world": it's in the pool and not
 // inside a transport. Loaded units keep their slot and HP but are left out of
@@ -119,6 +133,7 @@ void UnitsOrderAttackMove(const int *ids, int count, Vector2 dest);   // move, b
 void UnitsOrderStop(const int *ids, int count);   // drop all orders and go idle
 void UnitsOrderHold(const int *ids, int count);   // stop, then stay put: attack only what's in range
 int  UnitsOpenSpots(MoveClass moveClass, Vector2 centre, int count, Vector2 *out);  // free spots (for that class) around centre, closest first
+int  UnitsFreeSpots(MoveClass moveClass, Vector2 centre, int count, Vector2 *out);    // open AND nobody standing there, searching far out (debug armies)
 int  UnitsOpenSpotsIn(MoveClass moveClass, int region, Vector2 centre, int count, Vector2 *out);  // same, only in that region (PathRegion; 0 = any)
 
 // Movement helpers used by combat.c

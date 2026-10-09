@@ -10,6 +10,7 @@
 void        AiInit(Vector2 playerBase, Vector2 aiSpawn, int aiBaseBuilding);
 void        AiTick(void);              // once per sim tick
 void        AiSpawnWave(int count);    // debug: drop `count` enemy units at the AI spawn point
+void        AiSpawnArmies(int perSide); // debug: `perSide` mixed units (DEBUG_ARMY_MIX) around each side's base
 const char *AiDebugLine(void);         // gold, workers, bases (for the debug overlay)
 const char *AiStatus(void);            // what it's currently trying to do
 

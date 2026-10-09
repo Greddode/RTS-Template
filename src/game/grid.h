@@ -10,6 +10,7 @@
 #define GRID_H ((MAP_PIXEL_H + GRID_CELL_SIZE - 1) / GRID_CELL_SIZE)
 
 void GridRebuild(void);                              // call after units move, and once before the first query
+void GridNoteSpawn(int id, int team);                // UnitSpawn calls this (keeps the per-team lists exact)
 int  GridQuery(Rectangle area, int *out, int maxOut); // unit ids whose centre is in `area`
 // Closest live, visible, not-doomed enemy (ground ones / flyers), or -1. Only ones the searcher
 // can hit from `pos` (within `range`) or reach: a searcher of `moveClass` (PathCanReach).

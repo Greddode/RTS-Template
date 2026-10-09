@@ -61,14 +61,14 @@ static bool InTransport(int id, int transport)
 int TransportCargo(int transport, int *out, int max)
 {
     int n = 0;
-    for (int i = 0; i < MAX_UNITS && n < max; i++) if (InTransport(i, transport)) out[n++] = i;
+    for (int i = 0; i < UnitsPoolEnd() && n < max; i++) if (InTransport(i, transport)) out[n++] = i;
     return n;
 }
 
 int TransportUsedSlots(int transport)
 {
     int used = 0;
-    for (int i = 0; i < MAX_UNITS; i++) if (InTransport(i, transport)) used += UNIT_STATS[units[i].type].cargoSlots;
+    for (int i = 0; i < UnitsPoolEnd(); i++) if (InTransport(i, transport)) used += UNIT_STATS[units[i].type].cargoSlots;
     return used;
 }
 
@@ -152,7 +152,7 @@ int TransportLoadNearby(int transport)
 
     // As many as fit, counting units already walking to it.
     int free = TransportFreeSlots(transport);
-    for (int i = 0; i < MAX_UNITS; i++)
+    for (int i = 0; i < UnitsPoolEnd(); i++)
         if (units[i].active && units[i].boarding && units[i].transport == transport && units[i].transportSerial == units[transport].serial)
             free -= UNIT_STATS[units[i].type].cargoSlots;
     int told = 0;

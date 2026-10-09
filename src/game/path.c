@@ -46,7 +46,8 @@ static Vector2    waypoints[MAX_UNITS][PATH_MAX_WAYPOINTS];
 static int        waypointCount[MAX_UNITS], waypointIndex[MAX_UNITS];
 
 // --- Request queue: ring buffer of unit ids; a unit is queued at most once ------
-static int  queue[MAX_UNITS];
+#define PATH_QUEUE_SIZE MAX_UNITS   // so it can never overflow: one entry per unit at most
+static int  queue[PATH_QUEUE_SIZE];
 static int  queueHead = 0, queueCount = 0;
 static bool inQueue[MAX_UNITS];
 
@@ -124,7 +125,7 @@ static int HeapPop(void)
 
 static void QueuePush(int unit)
 {
-    queue[(queueHead + queueCount) % MAX_UNITS] = unit;
+    queue[(queueHead + queueCount) % PATH_QUEUE_SIZE] = unit;
     queueCount++;
     inQueue[unit] = true;
 }
@@ -132,7 +133,7 @@ static void QueuePush(int unit)
 static int QueuePop(void)
 {
     int unit = queue[queueHead];
-    queueHead = (queueHead + 1) % MAX_UNITS;
+    queueHead = (queueHead + 1) % PATH_QUEUE_SIZE;
     queueCount--;
     inQueue[unit] = false;
     return unit;

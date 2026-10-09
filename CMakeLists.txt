@@ -51,7 +51,11 @@ if (EMSCRIPTEN)
                  ${CMAKE_SOURCE_DIR}/web/shell.html ${SPRITE_FILES} ${FONT_FILES})   # relink when they change
     target_link_options(game PRIVATE
         -sUSE_GLFW=3              # raylib's window/input layer, provided by Emscripten
-        -sALLOW_MEMORY_GROWTH=1   # let the heap grow (lots of units later)
+        # Memory: the unit pool and the other fixed arrays are static data (about 13 MB with
+        # MAX_UNITS 16384). Emscripten sizes the starting memory to fit them (29 MB here), so
+        # changing MAX_UNITS needs no edit in this file; a 16,000-unit battle never grew past it.
+        # Growth stays on as a safety net (bigger pools or maps): the heap can grow up to 2 GB.
+        -sALLOW_MEMORY_GROWTH=1
         # Bundle maps/ and the art into the browser's virtual file system. "SHELL:"
         # keeps each flag with its folder: CMake drops repeated options otherwise.
         "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/maps@/maps"

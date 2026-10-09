@@ -200,6 +200,7 @@ typedef enum { STATE_MENU, STATE_PLAYING, STATE_PAUSED, STATE_VICTORY, STATE_DEF
 #define KEY_PAUSE         KEY_ESCAPE
 #endif
 #define KEY_DEBUG_WAVE    KEY_F1
+#define KEY_DEBUG_ARMY    KEY_F4    // debug: DEBUG_ARMY_SIZE mixed units per side (big-battle tests)
 #define KEY_EDITOR        KEY_F2    // while playing: open the map editor on the current map
 #define KEY_DEBUG_OVERLAY KEY_F3    // show / hide the debug overlay (default: DEBUG_OVERLAY_DEFAULT in overlay.h)
 #define KEY_UNDO          KEY_Z     // with Ctrl, in the editor
@@ -253,6 +254,7 @@ static const ControlInfo CONTROLS[] = {
     { CONTROLS_KEYBOARD, KEY_HOLD,         "%s",                     "Hold position: never chase" },
     { CONTROLS_KEYBOARD, KEY_PAUSE,        "%s",                     "Cancel placing/attack-move, or pause" },
     { CONTROLS_KEYBOARD, KEY_DEBUG_WAVE,   "%s",                     "Debug: spawn an enemy wave" },
+    { CONTROLS_KEYBOARD, KEY_DEBUG_ARMY,   "%s",                     "Debug: a big army for each side" },
     { CONTROLS_KEYBOARD, KEY_EDITOR,       "%s",                     "Map editor on the current map" },
     { CONTROLS_KEYBOARD, KEY_DEBUG_OVERLAY,"%s",                     "Debug overlay (FPS, timings, counts)" },
     { CONTROLS_KEYBOARD, KEY_UNDO,         "Ctrl + %s (editor)",     "Undo tile painting" },
@@ -266,6 +268,13 @@ static const ControlInfo CONTROLS[] = {
 #define AI_THINK_TICKS          (TICK_RATE*2)   // decisions every 2 s
 #define AI_TRAIN_TICKS          (TICK_RATE*5)   // try to queue a combat unit every 5 s
 #define AI_WAVE_SIZE            20              // F1 debug wave
+// F4 debug armies: DEBUG_ARMY_SIZE units for EACH side, spawned around its base on free
+// spots (never on top of other units), cycling through DEBUG_ARMY_MIX. Press it again to add
+// more; the pool limit is MAX_UNITS (units.h). They spawn idle (the AI then uses its own).
+#define DEBUG_ARMY_SIZE         500
+static const UnitType DEBUG_ARMY_MIX[] = { UNIT_MELEE, UNIT_ARCHER, UNIT_MELEE, UNIT_KNIGHT, UNIT_ARCHER,
+                                           UNIT_MAGE, UNIT_MELEE, UNIT_MEDIC, UNIT_SCOUT, UNIT_FALCON };
+#define DEBUG_ARMY_MIX_COUNT ((int)(sizeof(DEBUG_ARMY_MIX)/sizeof(DEBUG_ARMY_MIX[0])))
 #define AI_BARRACKS_WORKERS     3               // workers needed before it builds a Barracks
 #define AI_WORKERS_PER_NODE     8               // worker target: this many per gold node near a base...
 #define AI_MAX_WORKERS_PER_BASE 16              // ...but at most this many per base

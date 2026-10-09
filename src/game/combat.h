@@ -4,10 +4,11 @@
 
 #include "raylib.h"
 #include "config.h"
+#include "units.h"   // MAX_UNITS
 
 #define COMBAT_AGGRO_RADIUS   160.0f   // idle units attack enemies this close (world px)
 #define COMBAT_ACQUIRE_TICKS  3        // idle units look for enemies every N ticks (staggered per unit)
-#define MAX_PROJECTILES       1024
+#define MAX_PROJECTILES       (MAX_UNITS/2)   // arrows and bolts in flight; a full pool skips shots (logged once)
 
 // Called by UnitsTick() for each unit.
 Vector2 CombatUnitTick(int id);   // attacking unit: chase / hit; returns its movement step

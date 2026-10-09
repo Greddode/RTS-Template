@@ -143,8 +143,9 @@ static void SectionTitle(Rectangle panel, const char *title)
 static void DrawCargo(Rectangle panel, int t)
 {
     static int cargo[TRANSPORT_MAX_CARGO];
-    int n = TransportCargo(t, cargo, TRANSPORT_MAX_CARGO);
-    int cap = UNIT_STATS[units[t].type].cargoCapacity, used = TransportUsedSlots(t);
+    int n = TransportCargo(t, cargo, TRANSPORT_MAX_CARGO);   // a pass over the pool, so once per frame (not TransportUsedSlots too)
+    int cap = UNIT_STATS[units[t].type].cargoCapacity, used = 0;
+    for (int k = 0; k < n; k++) used += UNIT_STATS[units[cargo[k]].type].cargoSlots;
     SectionTitle(panel, TextFormat("Cargo  %d unit%s, %d/%d slots (%d free)", n, n == 1 ? "" : "s", used, cap, cap - used));
 
     Rectangle area = ButtonArea(panel);
@@ -431,6 +432,7 @@ void InspectorCheckHotkeys(void)
     ADD(KEY_UNLOAD, "unload transport", WHEN_UNITS);
     ADD(KEY_PAUSE, "pause", WHEN_ALWAYS);
     ADD(KEY_DEBUG_WAVE, "debug wave", WHEN_ALWAYS);
+    ADD(KEY_DEBUG_ARMY, "debug armies", WHEN_ALWAYS);
     ADD(KEY_EDITOR, "map editor", WHEN_ALWAYS);
     ADD(KEY_DEBUG_OVERLAY, "debug overlay", WHEN_ALWAYS);
     for (int t = 0; t < UNIT_TYPE_COUNT; t++)

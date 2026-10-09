@@ -75,7 +75,7 @@ static void Recompute(int team)
 
     // 2. Reveal around every unit and building of the team. (A per-update
     //    loop over the pools, like the tick loop - not a "who's nearby" search.)
-    for (int i = 0; i < MAX_UNITS; i++)
+    for (int i = 0; i < UnitsPoolEnd(); i++)
     {
         const Unit *u = &units[i];
         if (!UnitIsActiveInWorld(u) || u->team != team) continue;   // loaded units see nothing

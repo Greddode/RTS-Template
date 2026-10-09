@@ -93,11 +93,13 @@
 #define UNIT_ARRIVE_DIST    (TILE_SIZE*0.5f)    // close enough to the target to count as arrived
 #define FORMATION_SPACING   (UNIT_RADIUS*2.5f)  // gap between formation spots
 #define FORMATION_MAX_RINGS 64                  // how far out to look for free spots
+#define FREE_SPOT_MAX_RINGS 200                 // UnitsFreeSpots (debug armies): about 3,000 px out
 #define FACING_MIN_STEP     0.1f                // sideways step (px per tick) needed to turn around
 #define SHADOW_OFFSET       (Vector2){ 3.0f, 7.0f }   // a flyer's shadow: this far below-right of it...
 #define SHADOW_COLOR        (Color){ 0, 0, 0, 70 }     // ...a soft dark ellipse
 
 Unit units[MAX_UNITS];
+int unitPoolEnd = 0;   // see units.h
 static int activeCount = 0;
 static unsigned int nextSerial = 1;
 
@@ -107,6 +109,7 @@ int UnitSpawn(Vector2 pos, UnitType type, int team)
     for (int i = 0; i < MAX_UNITS; i++)
     {
         if (units[i].active) continue;
+        GridNoteSpawn(i, team);
         units[i] = (Unit){
             .active = true,
             .serial = nextSerial++,
@@ -119,6 +122,7 @@ int UnitSpawn(Vector2 pos, UnitType type, int team)
             .acquireTicks = i % COMBAT_ACQUIRE_TICKS,   // spread enemy checks across ticks
         };
         activeCount++;
+        if (i + 1 > unitPoolEnd) unitPoolEnd = i + 1;
         return i;
     }
     return -1;
@@ -138,6 +142,7 @@ void UnitDespawn(int id)
     units[id].attacking = false;
     PathCancel(id);
     activeCount--;
+    while (unitPoolEnd > 0 && !units[unitPoolEnd - 1].active) unitPoolEnd--;   // the top slots are free now
 }
 
 bool UnitIsAlive(int id, unsigned int serial)
@@ -275,7 +280,7 @@ Vector2 UnitFollowPath(int id)
 void UnitsTick(void)
 {
     HealBeginTick();
-    for (int i = 0; i < MAX_UNITS; i++)
+    for (int i = 0; i < UnitsPoolEnd(); i++)
     {
         Unit *u = &units[i];
         if (!u->active) continue;
@@ -476,6 +481,28 @@ int UnitsOpenSpotsIn(MoveClass moveClass, int region, Vector2 dest, int count, V
             }
         }
     }
+    return found;
+}
+
+// Like UnitsOpenSpots, but also skipping spots where a unit already stands
+// (grid query per spot), and searching much further out: for spawning big
+// groups into a crowded area. Spots found in one call are FORMATION_SPACING
+// apart, so they never overlap each other either.
+int UnitsFreeSpots(MoveClass moveClass, Vector2 dest, int count, Vector2 *spots)
+{
+    int found = 0;
+    float m = UNIT_RADIUS*2.0f;
+    for (int ring = 0; ring <= FREE_SPOT_MAX_RINGS && found < count; ring++)
+        for (int gy = -ring; gy <= ring && found < count; gy++)
+            for (int gx = -ring; gx <= ring && found < count; gx++)
+            {
+                if (abs(gx) != ring && abs(gy) != ring) continue;   // only this ring's edge
+                Vector2 p = { dest.x + gx*FORMATION_SPACING, dest.y + gy*FORMATION_SPACING };
+                if (!MapCircleWalkable(moveClass, p, UNIT_RADIUS)) continue;
+                int near[1];
+                if (GridQuery((Rectangle){ p.x - m, p.y - m, m*2.0f, m*2.0f }, near, 1) > 0) continue;   // someone's there
+                spots[found++] = p;
+            }
     return found;
 }
 
@@ -690,4 +717,5 @@ void UnitsReset(void)
 {
     memset(units, 0, sizeof(units));
     activeCount = 0;
+    unitPoolEnd = 0;
 }

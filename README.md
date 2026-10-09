@@ -173,7 +173,7 @@ colours or loading screen). Emscripten turns it into `build-web/index.html` next
 - no right-click menu on the canvas (right click gives orders), no page scrolling, no text
   selection, no Emscripten logo or output box. The game's log goes to the browser console (F12).
 - the browser's own function-key actions are blocked (F3 would open "find in page", F1 help),
-  since F1–F3 are game keys. F5 (reload), F11 (fullscreen) and F12 (developer tools) still work.
+  since F1–F4 are game keys. F5 (reload), F11 (fullscreen) and F12 (developer tools) still work.
 
 **Publishing on itch.io:** `make web-zip` makes `build-web/rts-kit-web.zip` with `index.html`,
 `index.js`, `index.wasm` and `index.data` at the top level. On itch.io: *Kind of project* →
@@ -730,6 +730,7 @@ generated from `CONTROLS` and the key bindings in `config.h`; this table mirrors
 | B / K / R / E / F / V (workers selected) | Build a Base (400) / Barracks (150) / Archery Range (175) / Academy (450, needs a finished Barracks) / Air Factory (250, needs a finished Barracks) / Guard Tower (200, needs a finished Barracks): a ghost follows the mouse, green = OK, red = blocked; left click places, right click / Esc / the key again cancels |
 | Esc (web: Ctrl) | Cancel a pending attack-move or building placement; otherwise open the pause menu (Resume, Fog of war on/off, Controls, Main Menu, Exit). The web build uses Left Ctrl because browsers use Esc to leave fullscreen; change it with `KEY_PAUSE` in `config.h` |
 | F1 | Debug: spawn a wave of 20 enemies |
+| F4 | Debug: spawn 500 units for each side around its base (a mix of Melee, Archers, Knights, Mages, Medics, Scouts and Falcons), on free spots; press again for more, up to the unit pool (`MAX_UNITS`, 16,384). For testing big battles: `DEBUG_ARMY_SIZE` and `DEBUG_ARMY_MIX` in `config.h` |
 | F2 | Map editor on the current map (F2 / Exit returns to the paused game) |
 | F3 | Show / hide the debug overlay (any screen) |
 | Ctrl+Z (editor) | Undo tile painting |
@@ -762,7 +763,7 @@ and `src/editor/` for the editor.
 | `game/camera.c` | Pan / zoom, visible-area queries; the editor's zoom-to-fit (`CamUpdateEditor()`) |
 | `game/transport.c` | Transports: boarding, cargo (`cargoCapacity` / `cargoSlots`), L / U, unloading onto free ground, cargo of a destroyed transport |
 | `game/units.c` | Unit pool, movement, separation (flyers only with flyers), drawing (flyers above, with shadows), orders, `UnitsCanTrain()` |
-| `game/grid.c` | Spatial grid for nearby-unit queries (nearest enemy: ground ones, flyers, or both) |
+| `game/grid.c` | Spatial grid for nearby-unit queries (nearest enemy: ground ones, flyers, or both; it walks only the other team's units, kept in a list per team in each cell) |
 | `game/path.c` | A* pathfinding per movement class (air: straight, no search): request queue, per-frame time budget, path smoothing; regions per class ("can I get there?") |
 | `game/input.c` | Selection list (units, building, gold node), orders, hotkeys, building placement ghost |
 | `game/minimap.c` | Minimap: cached terrain/fog texture, unit dots, camera outline, click to move camera / units |
@@ -794,19 +795,60 @@ and 30 Scouts; 732 units in all).
 | Same, plus 10 Guard Towers per side | 60 (min 59.9) | 335–352 avg (3 runs; without towers in the same runs: 348–360) | |
 | Same, each side's 300 including 15 Falcons and 5 Airships | 60 (min 59.5) | 331–356 avg (3 runs; all-ground in the same runs: 315–412) | |
 | Map editor, whole 128×128 map on screen | | 124 avg | |
-| FPS, full unit pool (2,046 units) | 59 (min 58) | 293 avg (min 259) | not measured |
 | Sim tick (30 per second), battle | 1.1–1.7 ms avg, 4.8 ms worst | | |
-| Sim tick, 2,046 units | 5–8 ms avg, 20 ms worst | | |
-| Fog of war update (5 per second) | 0.14–0.23 ms avg, 0.38 ms worst (battle); 0.70 ms worst (2,046 units) | | |
-| Peak memory | 51 MB | | |
+| Fog of war update (5 per second) | 0.14–0.23 ms avg, 0.38 ms worst (battle) | | |
+| **v1.1, unit pool raised to 16,384:** 100 workers + 300 vs 300 (scripted again, ~708 units; runs interleaved with the previous commit) | 60 (min 59.8) in 3 of 4 runs; one run dipped to 45 for 5 s with the sim tick under 1.5 ms, and it didn't happen again (previous commit: 60, min 59.8, 4 of 4) | 356–631 avg (previous commit, 2,048 pool, in the same runs: 363–591) | |
+| Memory (v1.1) | the game's own (private) memory: 29–32 MB at every unit count up to 16,000. Total RSS: 91–168 MB, mostly the graphics driver's shared libraries (136 MB of it shared, the same in the menu before and after this change) | | wasm heap 29 MB, sized at startup to fit the unit pool; it never grew, even at 16,000 units |
 | Startup: packing the art atlas | 2–4 ms | | 10–40 ms |
 | Startup: loading the font (two sizes) | 6 ms | | 13–15 ms |
-| Startup: first frame | ~190 ms from `main()` (1.0.0: the same) | | ~360 ms after the page opens, served locally (1.0.0: ~340 ms) |
-| Download size | | | 428 KB zip (the font is 411 KB of it; 1.0.0: 207 KB) |
+| Startup: first frame | ~190 ms from `main()` (1.0.0: the same) | | ~360 ms after the page opens, served locally (1.0.0: ~340 ms). v1.1, measured differently (from navigation start, headless Firefox, fresh profile): 1.0–1.1 s, the previous commit 1.07–1.22 s the same way; ~110 ms of it is the game's own start-up |
+| Download size | | | 448 KB zip (v1.1; the previous commit: 447 KB, so the bigger unit pool adds nothing; 1.0.0: 207 KB) |
 
-Limits are fixed pools, set in headers: 2,048 units (`MAX_UNITS`), 64 buildings
-(`MAX_BUILDINGS`), 64 gold nodes, 1,024 projectiles, maps up to 128×128 tiles. Other apps
-running on the same machine lower the uncapped numbers a lot. Press F3 to see the live numbers.
+### Big battles (F4): how many units it can take
+
+Press **F4** while playing to add 500 units to each side (see [Controls](#controls)). Measured
+on the same Celeron with v1.1: River Crossing, F4 armies around both bases, each side
+attack-moving to the other's Base: ~20 s of marching, then the fight at the river and its bridges.
+Camera over the middle bridge, 1280×720. Numbers are 5-second averages over 45 s, the ranges
+cover the capped and the uncapped run while the armies are fighting; "worst" is the slowest
+single tick. The web runs were measured before the projectile-pool fix (it matters only in small
+games).
+
+| Units | Desktop, 60 FPS cap | Desktop, uncapped | Web (headless Firefox, caps at 60) | Sim tick avg (worst) | Fog update | Drawing the world (units on screen) | Minimap |
+|---|---|---|---|---|---|---|---|
+| 2,000 | **60** (min 59.7) | 390–534 | 42–60 | 2.8–6.7 ms (16.6) | 0.1–0.5 ms | 0.3–2.5 ms | 0.1–0.7 ms |
+| 4,000 | 59 (58.6–59.5) | 178–537 | 36–59 | 5.8–12.5 ms (28.5) | 0.1–0.7 ms | 0.2–3.2 ms | 0.2–0.9 ms |
+| 8,000 | 56–57 | 71–455 | 17–41 | 10–23 ms (62) | 0.1–0.9 ms | 0.2–4.6 ms | 0.4–1.2 ms |
+| 16,000 | 35–45 | 34–80 | 4–17 | 19.5–22.6 ms (46) | 1.1–1.5 ms | 0.5–6.2 ms | 1.9–2.6 ms |
+
+**60 FPS holds up to about 2,000 units in a big fight** (min 59.7 capped). 4,000 drops a frame
+here and there (58.6–59.5) when the armies clash, because single ticks then take 20–28 ms.
+On the web, 60 holds only once fights are small; 2,000 fighting runs at 42–60. 16,000 runs, but
+as a stress test, not something to play: the sim takes ~21 ms of every 33 ms tick.
+
+**The three biggest costs at 16,000 units**, and what's done about them:
+1. **Separation** (units pushing apart, `SeparationPush` in `units.c`): about half of the sim tick.
+   Every unit checks every unit in the grid cells around it, every tick; in a dense crowd that's
+   ~35 neighbours each. Not changed: any cheaper version visits neighbours in a different order,
+   which changes the result in the last bits and with it how every battle plays out.
+2. **Pathfinding throughput:** a 16,000-unit order across the river queues ~13,600 path requests,
+   and the per-frame budget (`PATH_BUDGET_MS`, 1 ms) clears ~75 a second, so most units wait
+   minutes before they start walking. Frame rate is protected (that's what the budget is for);
+   responsiveness isn't. The real fix is one shared path (or a flow field) per group: a new system,
+   not done here. Raising `PATH_BUDGET_MS` trades frame rate for faster starts.
+3. **Drawing:** up to ~6 ms a frame with thousands of units on screen, plus ~2 ms for the minimap
+   (one dot per unit, every frame).
+
+**Fixed** (each one changes no result: the AI vs AI baselines and a 4,000-unit battle replay
+bit-for-bit identically): the nearest-enemy search now skips the searcher's own team (it was
+58% of the tick: 16,000 units went from 3 FPS to 34–80), two hot flags sit next to each other in
+memory, and loops over the unit and projectile pools stop at the highest slot in use, so the big
+pool costs a normal game almost nothing.
+
+Limits are fixed pools, set in headers: 16,384 units (`MAX_UNITS`, `units.h`; about 0.7 KB of
+memory per slot, used or not), 64 buildings (`MAX_BUILDINGS`), 64 gold nodes, 8,192 projectiles
+(`MAX_PROJECTILES` = `MAX_UNITS`/2), maps up to 128×128 tiles. Other apps running on the same
+machine lower the uncapped numbers a lot. Press F3 to see the live numbers.
 
 ## Known limitations
 

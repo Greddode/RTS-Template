@@ -297,6 +297,7 @@ static void UpdatePlaying(void)
     CamUpdate(frameTime);
     InputUpdate();
     if (IsKeyPressed(KEY_DEBUG_WAVE)) AiSpawnWave(AI_WAVE_SIZE);   // debug: test wave
+    if (IsKeyPressed(KEY_DEBUG_ARMY)) AiSpawnArmies(DEBUG_ARMY_SIZE);   // debug: big armies for both sides
     PathUpdate();   // budgeted: leftover requests wait for the next frame
 
     // Fixed ticks: run as many as the elapsed time covers (0, 1 or several).
